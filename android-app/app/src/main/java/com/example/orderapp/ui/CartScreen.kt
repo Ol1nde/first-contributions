@@ -103,14 +103,20 @@ fun CartScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
+                if (viewModel.orderError.value != null) {
+                    Text(
+                        viewModel.orderError.value.orEmpty(),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
                 Button(
-                    onClick = {
-                        val order = viewModel.placeOrder()
-                        if (order != null) onOrderPlaced(order.id)
-                    },
+                    onClick = { viewModel.placeOrder(onSuccess = onOrderPlaced) },
+                    enabled = !viewModel.isPlacingOrder.value,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Confirmar pedido")
+                    Text(if (viewModel.isPlacingOrder.value) "Enviando..." else "Confirmar pedido")
                 }
             }
         }
