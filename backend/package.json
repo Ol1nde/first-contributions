@@ -1,0 +1,13 @@
+{
+  "name": "orders-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "REST API with a SQLite database for the Pedidos Android app",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}
