@@ -1,0 +1,17 @@
+{
+  "name": "intranet-empleados",
+  "version": "1.0.0",
+  "description": "Intranet para la gestión de empleados: directorio, departamentos, ausencias y vacaciones, registro de jornada y anuncios.",
+  "private": true,
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "demo": "node --disable-warning=ExperimentalWarning src/server.js --demo",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  },
+  "license": "MIT"
+}
