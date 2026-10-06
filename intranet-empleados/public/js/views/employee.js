@@ -86,6 +86,7 @@ export async function renderEmployee(ctx) {
       info('Fecha de nacimiento', fmtDate(e.birth_date)),
       info('Rol en la intranet', ROLE_LABELS[e.role]),
       info('Vacaciones anuales', `${e.vacation_days} días`),
+      info('Tarjeta NFC', e.nfc_uid ? h('code', e.nfc_uid) : 'Sin asignar'),
       info('Acceso', e.has_password ? 'Con contraseña' : 'Sin acceso (falta contraseña)'))));
   }
 

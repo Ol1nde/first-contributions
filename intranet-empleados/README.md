@@ -17,7 +17,7 @@ vacaciones y ausencias con flujo de aprobación, registro de jornada (fichaje) y
 | **Departamentos** | Alta, edición y eliminación (solo si no tienen empleados). |
 | **Ausencias** | Solicitudes de vacaciones, asuntos propios, baja médica, permisos…; cálculo de días laborables, control de saldo y solapamientos; aprobación o rechazo por el responsable o RR. HH. |
 | **Grupos sin coincidencia** | RR. HH. elige grupos de empleados que no pueden estar de vacaciones a la vez (p. ej. «Recepción»). Mientras un miembro tenga vacaciones pedidas o aprobadas, el resto del grupo no puede solicitar fechas que se solapen, y no se puede aprobar ninguna que coincida. |
-| **Fichaje** | Registro de entrada y salida, historial por periodo, correcciones auditadas (quién y cuándo) y exportación CSV para la inspección de trabajo. |
+| **Fichaje** | Registro de entrada y salida **desde el PC o con tarjeta NFC** en un terminal en la puerta. Historial por periodo con el origen de cada fichaje, correcciones auditadas (quién y cuándo), aviso de salidas olvidadas y exportación CSV para la inspección de trabajo. |
 | **Anuncios** | Tablón de comunicaciones internas con anuncios fijados. Cada anuncio nuevo se avisa a la plantilla: contador en el menú, mensaje emergente y número en la pestaña del navegador, notificación de escritorio (en `localhost` o https) y, opcionalmente, email a todos los empleados activos. |
 | **Configuración** | (Administrador) Cuenta de correo SMTP para los avisos por email, con envío de prueba. |
 | **Mi perfil** | Datos propios, cambio de teléfono y de contraseña. |
@@ -46,6 +46,37 @@ Para que arranque sola, crea un acceso directo al `.exe` en la carpeta de inicio
 
 Opciones del ejecutable: `--sin-navegador` (no abre el navegador), `--demo` (carga datos de ejemplo),
 `--restablecer-clave <email>`. Las variables de entorno de [Configuración](#configuración) también se aplican.
+
+## Fichaje con tarjeta NFC en la puerta
+
+**Material:** un equipo con navegador (PC, portátil, mini PC o tablet) conectado a la red de la intranet y un
+**lector NFC/RFID USB de tipo teclado** («HID», «emulación de teclado»): al acercar una tarjeta escribe su código
+y pulsa Intro, sin instalar controladores. Debe ser de la misma frecuencia que las tarjetas (13,56 MHz para
+MIFARE/NFC; 125 kHz para las de proximidad antiguas).
+
+1. **Crear el terminal:** como administrador, en **Configuración → Terminales de fichaje → Nuevo terminal**
+   (por ejemplo «Puerta principal»). Después, elige:
+   - **Usar este equipo como terminal**, si estás en el equipo de la puerta: el navegador queda como terminal y se
+     cierra tu sesión; o
+   - copia el **enlace de activación** y ábrelo una vez en el equipo de la puerta.
+2. **Asignar tarjetas:** en la ficha de cada empleado, **Editar → Tarjeta NFC**, pon el cursor en el campo y acerca
+   la tarjeta a un lector conectado a ese equipo (o escribe su código). Si una tarjeta no está asignada, el terminal
+   muestra su código al pasarla.
+3. **Modo quiosco** (recomendado, para que la pantalla no pierda el foco): abre el navegador así, por ejemplo con un
+   acceso directo en la carpeta de inicio de Windows:
+   `msedge --kiosk "http://192.168.1.20:3000/terminal.html" --edge-kiosk-type=fullscreen`
+   (o `chrome --kiosk …`).
+
+Cada lectura alterna entrada y salida y la pantalla saluda al empleado. Una segunda lectura en menos de 60 s no
+cuenta (evita fichar la salida por pasar la tarjeta dos veces). Si alguien olvidó fichar la salida (jornada abierta
+más de 16 h), esa jornada se cierra marcada como **«Falta la salida»** para que RR. HH. la corrija, y se registra la
+nueva entrada. En el historial se ve el origen de cada fichaje: *PC*, *Tarjeta · Puerta principal* o *Corrección*.
+
+Los lectores con conexión de red propia pueden fichar directamente con
+`POST /api/kiosk/punch` (cabecera `Authorization: Bearer <token del terminal>`, cuerpo `{"card": "<código>"}`).
+
+En el modo demo hay un terminal ya creado (`/terminal.html#activar=demo-terminal`) y las tarjetas `DEMO0002` a
+`DEMO0011`: escribe el código y pulsa Intro para simular el lector.
 
 ### Generar el ejecutable
 
@@ -131,6 +162,8 @@ Variables de entorno (todas opcionales):
 | Corregir fichajes y exportar el registro completo | | | ✔ | ✔ |
 | Publicar anuncios y avisar por email a la plantilla | | | ✔ | ✔ |
 | Configurar el correo saliente (SMTP) | | | | ✔ |
+| Asignar tarjetas NFC a los empleados | | | ✔ | ✔ |
+| Crear y dar de baja terminales de fichaje | | | | ✔ |
 | Asignar los roles RR. HH. y Admin, modificar administradores | | | | ✔ |
 | Eliminar empleados | | | | ✔ |
 
@@ -146,6 +179,7 @@ registro de jornada (obligatorio durante 4 años): hay que marcarlos como «Baja
 - Permisos comprobados siempre en el servidor; consultas SQL parametrizadas.
 - Cabeceras `Content-Security-Policy`, `X-Frame-Options`, `nosniff`…; la interfaz no usa `innerHTML`.
 - CSV protegidos contra inyección de fórmulas.
+- Los terminales de fichaje se identifican con un token aleatorio (se guarda solo su hash) y pueden darse de baja.
 - Emails enviados con cifrado (STARTTLS o SSL/TLS) verificando el certificado del servidor; destinatarios en copia oculta.
 
 ## Despliegue en producción
@@ -189,6 +223,7 @@ src/
   start.js         Arranque, variables de entorno y datos iniciales
   server.js        Entrada para `npm start`
   sea-main.js      Entrada del ejecutable autónomo (interfaz embebida)
+  mailer.js        Cliente SMTP para los avisos por email
   app.js           Enrutado HTTP, sesiones, CSRF y cabeceras de seguridad
   db.js            Esquema SQLite, administrador inicial y datos de demo
   routes/          API REST: auth, employees, departments, leaves, time, announcements, dashboard
@@ -196,6 +231,7 @@ src/
   validate.js      Validación de datos y cálculo de días laborables
 public/
   index.html       Aplicación de una sola página
+  terminal.html    Pantalla del terminal de fichaje con tarjeta
   js/              Módulos ES (vistas en js/views/)
   css/styles.css   Estilos (claro/oscuro, responsive)
 scripts/build.mjs  Genera los ejecutables (npm run build)
@@ -223,6 +259,8 @@ Todas las rutas están bajo `/api` y devuelven JSON (salvo las exportaciones CSV
 | `GET/POST /api/vacation-groups` · `PUT/DELETE /api/vacation-groups/:id` | Grupos sin coincidencia de vacaciones (`member_ids`) |
 | `GET /api/announcements/unread` · `POST /api/announcements/seen` | Anuncios sin leer · marcarlos como leídos |
 | `GET/PUT /api/settings/email` · `POST /api/settings/email/test` | Correo saliente (solo admin) · email de prueba |
+| `GET/POST /api/kiosks` · `DELETE /api/kiosks/:id` | Terminales de fichaje (solo admin) |
+| `GET /api/kiosk/status` · `POST /api/kiosk/punch` | Uso desde el terminal (`Authorization: Bearer <token>`) |
 
 ## Limitaciones conocidas
 
@@ -231,5 +269,8 @@ Todas las rutas están bajo `/api` y devuelven JSON (salvo las exportaciones CSV
 - Los grupos sin coincidencia se aplican solo a las vacaciones (no a bajas, permisos ni asuntos propios).
 - Las notificaciones de escritorio solo las permiten los navegadores en `http://localhost` o con https; en los
   demás equipos se avisa con el contador, el mensaje emergente y el email.
+- El fichaje con tarjeta usa el identificador (UID) de la tarjeta, que puede copiarse con equipos especializados:
+  sirve para registrar la jornada, no como control de acceso de seguridad.
+- El terminal necesita conexión con la intranet: si se cae la red, avisa de que no se ha registrado el fichaje.
 - La contraseña del correo saliente se guarda en la base de datos (necesaria para enviar): protege la carpeta `data`.
 - No envía notificaciones por email.

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { createApp } from './app.js';
-import { ensureAdmin, isEmpty, openDatabase, resetPassword, seedDemo } from './db.js';
+import { DEMO_TERMINAL_TOKEN, ensureAdmin, isEmpty, openDatabase, resetPassword, seedDemo } from './db.js';
 import { lanAddresses } from './network.js';
 
 const DEMO_PASSWORD = 'demo1234';
@@ -56,6 +56,8 @@ export async function start({ baseDir, publicDir, staticFiles, argv = [], env = 
   if (demo && (await seedDemo(db, { password: DEMO_PASSWORD }))) {
     console.log(`Datos de demostración cargados. Usuarios de ejemplo con contraseña «${DEMO_PASSWORD}»:`);
     console.log('  javier.ruiz@empresa.local (RR. HH.), elena.sanchez@empresa.local (responsable), ana.garcia@empresa.local (empleada)');
+    console.log(`  Terminal de fichaje: http://localhost:${port}/terminal.html#activar=${DEMO_TERMINAL_TOKEN}`);
+    console.log('  (tarjetas de ejemplo DEMO0002 a DEMO0011: escribe el código y pulsa Intro para simular el lector)');
   }
 
   const server = createServer(createApp({

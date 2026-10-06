@@ -5,10 +5,11 @@ import {
 import { EMPLOYEE_SELECT, escapeLike, getEmployeeOr404, shapeEmployee } from '../queries.js';
 import { hashPassword, MIN_PASSWORD_LENGTH } from '../security.js';
 import { Validator } from '../validate.js';
+import { CARD_PATTERN, normalizeCard } from './kiosks.js';
 
 const COLUMNS = [
   'first_name', 'last_name', 'email', 'phone', 'position', 'department_id', 'manager_id',
-  'hire_date', 'birth_date', 'status', 'role', 'vacation_days',
+  'hire_date', 'birth_date', 'status', 'role', 'vacation_days', 'nfc_uid',
 ];
 
 function validateEmployee(body, { partial }) {
@@ -25,6 +26,11 @@ function validateEmployee(body, { partial }) {
   v.oneOf('status', 'Estado', EMPLOYEE_STATUSES, { defaultValue: 'activo' });
   v.oneOf('role', 'Rol', ROLES, { defaultValue: 'empleado' });
   v.int('vacation_days', 'Días de vacaciones', { min: 0, max: 60, defaultValue: 22 });
+  if (!partial || Object.hasOwn(body ?? {}, 'nfc_uid')) {
+    const card = normalizeCard(body?.nfc_uid);
+    if (card && !CARD_PATTERN.test(card)) v.addError('nfc_uid', 'El código de la tarjeta no es válido');
+    else v.out.nfc_uid = card || null;
+  }
   if (!partial && body?.password) {
     const pwd = String(body.password);
     if (pwd.length < MIN_PASSWORD_LENGTH) v.addError('password', `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres`);
@@ -58,6 +64,17 @@ function checkReferences(db, v, data, employeeId) {
 
 function isUniqueViolation(err) {
   return /UNIQUE constraint failed: employees\.email/.test(err?.message ?? '');
+}
+
+/** Traduce los conflictos de email o tarjeta duplicados a un error 409 legible. */
+function conflictError(db, err, data) {
+  if (isUniqueViolation(err)) return new HttpError(409, 'Ya existe un empleado con ese email', { email: 'Ya existe un empleado con ese email' });
+  if (/UNIQUE constraint failed: employees\.nfc_uid/.test(err?.message ?? '')) {
+    const owner = db.prepare("SELECT first_name || ' ' || last_name AS name FROM employees WHERE nfc_uid = ?").get(data.nfc_uid);
+    const message = `Esa tarjeta ya está asignada a ${owner?.name ?? 'otro empleado'}`;
+    return new HttpError(409, message, { nfc_uid: message });
+  }
+  return err;
 }
 
 export default function registerEmployees(router, { db }) {
@@ -105,6 +122,7 @@ export default function registerEmployees(router, { db }) {
       { key: 'status', label: 'Estado' },
       { key: 'role', label: 'Rol' },
       { key: 'vacation_days', label: 'Días de vacaciones' },
+      { key: 'nfc_uid', label: 'Tarjeta NFC' },
     ], rows);
   });
 
@@ -137,8 +155,7 @@ export default function registerEmployees(router, { db }) {
       `).run(...COLUMNS.map((c) => data[c]), password);
       return { employee: shapeEmployee(getEmployeeOr404(db, Number(lastInsertRowid)), ctx.user) };
     } catch (err) {
-      if (isUniqueViolation(err)) throw new HttpError(409, 'Ya existe un empleado con ese email', { email: 'Ya existe un empleado con ese email' });
-      throw err;
+      throw conflictError(db, err, data);
     }
   });
 
@@ -170,8 +187,7 @@ export default function registerEmployees(router, { db }) {
           WHERE id = ?
         `).run(...fields.map((c) => data[c]), target.id);
       } catch (err) {
-        if (isUniqueViolation(err)) throw new HttpError(409, 'Ya existe un empleado con ese email', { email: 'Ya existe un empleado con ese email' });
-        throw err;
+        throw conflictError(db, err, data);
       }
     }
     if (data.status === 'baja') db.prepare('DELETE FROM sessions WHERE employee_id = ?').run(target.id);

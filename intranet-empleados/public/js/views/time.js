@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import {
-  badge, button, card, clear, fmtDate, fmtMinutes, fmtTime, formDialog, fullName, h, isHR, linkButton,
+  append, badge, button, card, clear, fmtDate, fmtMinutes, fmtTime, formDialog, fullName, h, isHR, linkButton,
   pageHeader, table, toast, todayLocal, toLocalInput,
 } from '../ui.js';
 
@@ -88,9 +88,10 @@ export async function renderTime(ctx) {
 
   async function load() {
     const params = new URLSearchParams({ employee_id: employeeSelect.value, from: from.value, to: to.value });
-    clear(exportLinks).append(
+    append(clear(exportLinks), [
       linkButton('Exportar CSV', `/api/time/export.csv?${params}`, { iconName: 'download' }),
-      hr ? linkButton('Exportar todos', `/api/time/export.csv?${new URLSearchParams({ from: from.value, to: to.value })}`, { iconName: 'download' }) : null);
+      hr ? linkButton('Exportar todos', `/api/time/export.csv?${new URLSearchParams({ from: from.value, to: to.value })}`, { iconName: 'download' }) : null,
+    ]);
     try {
       const data = await api.get(`/api/time?${params}`);
       if (!ctx.isCurrent()) return;
@@ -103,8 +104,12 @@ export async function renderTime(ctx) {
         table([
           { label: 'Fecha', render: (e) => fmtDate(e.clock_in) },
           { label: 'Entrada', render: (e) => fmtTime(e.clock_in) },
-          { label: 'Salida', render: (e) => (e.open ? badge('En curso', 'success') : fmtTime(e.clock_out)) },
+          {
+            label: 'Salida',
+            render: (e) => (e.open ? badge('En curso', 'success') : e.needs_review ? badge('Falta la salida', 'danger') : fmtTime(e.clock_out)),
+          },
           { label: 'Duración', render: (e) => fmtMinutes(e.minutes) },
+          { label: 'Origen', render: (e) => h('span', { class: 'small' }, e.out_source ? `${e.in_source} → ${e.out_source}` : e.in_source) },
           { label: 'Nota', render: (e) => e.note || '—' },
           { label: 'Corrección', render: (e) => (e.edited_at ? h('span', { class: 'muted small' }, `${e.edited_by_name ?? ''} · ${fmtDate(e.edited_at)}`) : '—') },
           ...(hr ? [{ label: '', className: 'actions', render: (e) => button('', { size: 'sm', iconName: 'edit', title: 'Corregir', onClick: () => editEntry(e, load) }) }] : []),

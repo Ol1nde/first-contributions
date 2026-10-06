@@ -6,6 +6,7 @@ import registerAuth, { SESSION_COOKIE } from './routes/auth.js';
 import registerDashboard from './routes/dashboard.js';
 import registerDepartments from './routes/departments.js';
 import registerEmployees from './routes/employees.js';
+import registerKiosks from './routes/kiosks.js';
 import registerLeaves from './routes/leaves.js';
 import registerSettings from './routes/settings.js';
 import registerTime from './routes/time.js';
@@ -33,10 +34,11 @@ export function createApp({
   secureCookies = false,
   trustProxy = false,
   sessionTtlMs = 12 * 60 * 60 * 1000,
+  punchDebounceMs = 60_000,
   logger = console,
 }) {
   const router = new Router();
-  const deps = { db, limiter: new LoginLimiter(), sessionTtlMs, secureCookies, logger };
+  const deps = { db, limiter: new LoginLimiter(), sessionTtlMs, secureCookies, logger, punchDebounceMs };
   registerAuth(router, deps);
   registerDashboard(router, deps);
   registerEmployees(router, deps);
@@ -46,6 +48,7 @@ export function createApp({
   registerAnnouncements(router, deps);
   registerVacationGroups(router, deps);
   registerSettings(router, deps);
+  registerKiosks(router, deps);
 
   if (!publicDir && !staticFiles) throw new Error('createApp necesita publicDir o staticFiles');
   const root = publicDir ? resolve(publicDir) : null;
@@ -121,6 +124,7 @@ export function createApp({
         sessionId: session.id,
         ip: clientIp(req),
         origin: requestOrigin(req),
+        headers: req.headers,
         setCookie: (cookie) => cookies.push(cookie),
       };
       const result = await route.handler(ctx);

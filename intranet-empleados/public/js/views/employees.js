@@ -29,6 +29,11 @@ export async function openEmployeeForm(user, employee = null) {
     { name: 'status', label: 'Estado', type: 'select', options: Object.entries(STATUS_LABELS) },
     { name: 'role', label: 'Rol', type: 'select', options: allowedRoles.map((r) => [r, ROLE_LABELS[r]]) },
     { name: 'vacation_days', label: 'Días de vacaciones al año', type: 'number', min: 0, max: 60, help: 'Días laborables. Por defecto 22.' },
+    {
+      name: 'nfc_uid', label: 'Tarjeta NFC', maxlength: 64, preventEnter: true, autocomplete: 'off',
+      placeholder: 'Acerca la tarjeta al lector…',
+      help: 'Con el cursor en este campo, acerca la tarjeta a un lector NFC conectado a este equipo (o escribe su código). Vacío si no tiene tarjeta.',
+    },
   ];
   if (!employee) {
     fields.push({

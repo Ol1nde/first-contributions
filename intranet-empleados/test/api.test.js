@@ -641,3 +641,140 @@ describe('avisos de anuncios', () => {
     assert.match(res.data.error, /rechazó la conexión/);
   });
 });
+
+describe('fichaje con tarjeta NFC', () => {
+  let app;
+  const admin = client();
+  const ids = {};
+  let token;
+
+  const punch = (card, auth = token) => fetch(`${app.url}/api/kiosk/punch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(auth ? { Authorization: `Bearer ${auth}` } : {}) },
+    body: JSON.stringify({ card }),
+  }).then(async (res) => ({ status: res.status, data: await res.json() }));
+
+  before(async () => {
+    app = await startApp({ punchDebounceMs: 0 });
+    await ensureAdmin(app.db, ADMIN);
+    Object.assign(admin, client(app.url));
+    await admin.login(ADMIN.email, ADMIN.password);
+    const create = async (name, card, extra = {}) => {
+      const res = await admin.post('/api/employees', { first_name: name, last_name: 'Tarjeta', email: `${name}@nfc.test`, nfc_uid: card, password: 'password123', ...extra });
+      assert.equal(res.status, 200, JSON.stringify(res.data));
+      return res.data.employee;
+    };
+    const nuria = await create('nuria', 'a1:b2:c3:d4');
+    assert.equal(nuria.nfc_uid, 'A1B2C3D4', 'el código se normaliza');
+    ids.nuria = nuria.id;
+    ids.olga = (await create('olga', '0012345678')).id;
+    ids.pepe = (await create('pepe', null)).id;
+  });
+
+  after(() => app.close());
+
+  test('no se puede asignar la misma tarjeta a dos empleados', async () => {
+    const res = await admin.put(`/api/employees/${ids.pepe}`, { nfc_uid: 'A1 B2 C3 D4' });
+    assert.equal(res.status, 409);
+    assert.match(res.data.details.nfc_uid, /nuria Tarjeta/);
+    assert.equal((await admin.put(`/api/employees/${ids.pepe}`, { nfc_uid: '¿?' })).status, 400);
+  });
+
+  test('solo el administrador crea terminales y el token solo se muestra al crearlo', async () => {
+    const worker = client(app.url);
+    await worker.login('pepe@nfc.test', 'password123');
+    assert.equal((await worker.post('/api/kiosks', { name: 'X' })).status, 403);
+    const res = await admin.post('/api/kiosks', { name: 'Puerta principal' });
+    assert.equal(res.status, 200);
+    token = res.data.token;
+    assert.match(res.data.activation_url, /\/terminal\.html#activar=/);
+    const list = await admin.get('/api/kiosks');
+    assert.equal(list.data.kiosks[0].name, 'Puerta principal');
+    assert.equal(list.data.kiosks[0].token, undefined);
+  });
+
+  test('sin token de terminal no se puede fichar', async () => {
+    assert.equal((await punch('A1B2C3D4', null)).status, 401);
+    assert.equal((await punch('A1B2C3D4', 'token-falso')).status, 401);
+  });
+
+  test('una tarjeta desconocida devuelve su código para poder asignarla', async () => {
+    const res = await punch('ffee0011');
+    assert.equal(res.status, 404);
+    assert.equal(res.data.details.card, 'FFEE0011');
+  });
+
+  test('la tarjeta alterna entrada y salida y queda registrado el origen', async () => {
+    const first = await punch('A1B2C3D4');
+    assert.equal(first.status, 200, JSON.stringify(first.data));
+    assert.equal(first.data.action, 'entrada');
+    assert.equal(first.data.employee.first_name, 'nuria');
+    const second = await punch('a1-b2-c3-d4');
+    assert.equal(second.data.action, 'salida');
+
+    const nuria = client(app.url);
+    await nuria.login('nuria@nfc.test', 'password123');
+    const { entries } = (await nuria.get('/api/time')).data;
+    assert.equal(entries[0].in_source, 'Tarjeta · Puerta principal');
+    assert.equal(entries[0].out_source, 'Tarjeta · Puerta principal');
+
+    // Desde el PC también se puede fichar.
+    await nuria.post('/api/time/clock-in');
+    assert.equal((await nuria.get('/api/time')).data.entries[0].in_source, 'PC');
+    assert.equal((await punch('A1B2C3D4')).data.action, 'salida');
+  });
+
+  test('una doble lectura seguida no registra la salida', async () => {
+    const debounced = await startApp({ punchDebounceMs: 60_000 });
+    try {
+      await ensureAdmin(debounced.db, ADMIN);
+      const a = client(debounced.url);
+      await a.login(ADMIN.email, ADMIN.password);
+      await a.post('/api/employees', { first_name: 'Quique', last_name: 'Doble', email: 'q@nfc.test', nfc_uid: 'CAFE0001' });
+      const kiosk = (await a.post('/api/kiosks', { name: 'Puerta' })).data.token;
+      const send = () => fetch(`${debounced.url}/api/kiosk/punch`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${kiosk}` }, body: JSON.stringify({ card: 'CAFE0001' }),
+      }).then((r) => r.json());
+      assert.equal((await send()).action, 'entrada');
+      const again = await send();
+      assert.equal(again.action, 'repetido');
+      assert.equal(again.last, 'entrada');
+    } finally {
+      await debounced.close();
+    }
+  });
+
+  test('una salida olvidada se cierra para revisar y se ficha la nueva entrada', async () => {
+    const yesterday = new Date(Date.now() - 20 * 3600_000).toISOString();
+    app.db.prepare('INSERT INTO time_entries (employee_id, clock_in) VALUES (?, ?)').run(ids.olga, yesterday);
+    const res = await punch('0012345678');
+    assert.equal(res.data.action, 'entrada');
+    assert.equal(res.data.closed_stale, true);
+
+    const list = await admin.get(`/api/time?employee_id=${ids.olga}&from=${localDate(new Date(Date.now() - 2 * 86_400_000))}`);
+    const stale = list.data.entries.find((e) => e.clock_in === yesterday);
+    assert.equal(stale.needs_review, true);
+    assert.equal(stale.minutes, 0);
+    assert.match(stale.note, /Salida no fichada/);
+
+    // Al corregirla, RR. HH. la deja revisada y con origen «Corrección».
+    const fixed = await admin.put(`/api/time/${stale.id}`, { clock_out: new Date(Date.parse(yesterday) + 8 * 3600_000).toISOString() });
+    assert.equal(fixed.data.entry.needs_review, false);
+    assert.equal(fixed.data.entry.out_source, 'Corrección');
+  });
+
+  test('un empleado de baja no puede fichar y un terminal dado de baja deja de funcionar', async () => {
+    await admin.put(`/api/employees/${ids.olga}`, { status: 'baja' });
+    assert.equal((await punch('0012345678')).status, 409);
+    const { kiosks } = (await admin.get('/api/kiosks')).data;
+    assert.equal((await admin.del(`/api/kiosks/${kiosks[0].id}`)).status, 200);
+    assert.equal((await punch('A1B2C3D4')).status, 401);
+  });
+
+  test('la tarjeta solo la ven RR. HH. y el propio empleado', async () => {
+    const pepe = client(app.url);
+    await pepe.login('pepe@nfc.test', 'password123');
+    const other = (await pepe.get(`/api/employees/${ids.nuria}`)).data.employee;
+    assert.equal(other.nfc_uid, undefined);
+  });
+});

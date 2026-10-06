@@ -1,7 +1,120 @@
 import { api } from '../api.js';
-import { badge, buildForm, button, card, h, pageHeader, toast } from '../ui.js';
+import {
+  badge, buildForm, button, card, confirmDialog, fmtDateTime, formDialog, h, openDialog, pageHeader, table, toast,
+} from '../ui.js';
 
 const PORTS = { starttls: 587, tls: 465, none: 25 };
+const TERMINAL_KEY = 'intranet.terminal'; // la misma clave que usa /terminal.html
+
+const sqliteDate = (value) => (value ? fmtDateTime(`${value.replace(' ', 'T')}Z`) : '—');
+
+function storedTerminal() {
+  try {
+    return localStorage.getItem(TERMINAL_KEY);
+  } catch {
+    return null;
+  }
+}
+
+async function copy(text, input) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    input.select();
+    document.execCommand('copy');
+  }
+  toast('Copiado');
+}
+
+/** Tras crear un terminal: activarlo en este navegador o llevar el enlace al equipo de la puerta. */
+function showActivation(kiosk, token, baseUrl) {
+  const url = `${baseUrl}/terminal.html#activar=${token}`;
+  const linkInput = h('input', { value: url, readonly: true, 'aria-label': 'Enlace de activación' });
+  const { close } = openDialog({
+    title: `Terminal «${kiosk.name}» creado`,
+    wide: true,
+    body: h('div', { class: 'stack' },
+      h('div', { class: 'alert alert-warning small' }, 'Guarda este enlace ahora: por seguridad no se volverá a mostrar. Si lo pierdes, da de baja el terminal y crea otro.'),
+      h('div',
+        h('h3', 'Opción 1 · Estás en el equipo de la puerta'),
+        h('p', { class: 'muted small' }, 'Este navegador quedará como terminal de fichaje y se cerrará tu sesión de administrador.'),
+        button('Usar este equipo como terminal', {
+          variant: 'primary',
+          iconName: 'check',
+          onClick: async () => {
+            try {
+              localStorage.setItem(TERMINAL_KEY, token);
+            } catch {
+              toast('Este navegador no permite guardar datos: usa el enlace de la opción 2', 'error');
+              return;
+            }
+            await api.post('/api/auth/logout').catch(() => {});
+            location.href = '/terminal.html';
+          },
+        })),
+      h('div',
+        h('h3', 'Opción 2 · Activar otro equipo'),
+        h('p', { class: 'muted small' }, 'Abre este enlace una vez en el navegador del equipo de la puerta (puedes enviártelo por email):'),
+        h('div', { class: 'code-box' }, linkInput, button('Copiar', { onClick: () => copy(url, linkInput) }))),
+      h('details', { class: 'help' },
+        h('summary', 'Lectores con conexión de red propia'),
+        h('p', { class: 'small' }, 'Los lectores que envían el fichaje directamente por la red deben hacer esta petición con el código de la tarjeta:'),
+        h('pre', { class: 'code' }, `POST ${baseUrl}/api/kiosk/punch
+Authorization: Bearer ${token}
+Content-Type: application/json
+
+{"card": "CÓDIGO_DE_LA_TARJETA"}`))),
+    footer: button('Cerrar', { onClick: () => close() }),
+  });
+}
+
+async function terminalsCard(ctx, baseUrl) {
+  const { kiosks } = await api.get('/api/kiosks');
+  const thisBrowser = storedTerminal();
+  const create = () => formDialog({
+    title: 'Nuevo terminal de fichaje',
+    intro: 'Ponle el nombre del lugar donde estará, para saber dónde ficha cada empleado.',
+    fields: [{ name: 'name', label: 'Nombre', required: true, maxlength: 100, placeholder: 'Ej.: Puerta principal' }],
+    submitLabel: 'Crear terminal',
+    onSubmit: async (values) => api.post('/api/kiosks', values),
+  }).then((res) => {
+    if (!res) return;
+    ctx.refresh();
+    showActivation(res.kiosk, res.token, baseUrl);
+  });
+
+  return card('Terminales de fichaje con tarjeta', [
+    h('p', { class: 'muted' }, 'Para fichar con tarjeta en la puerta: un equipo (PC, portátil o tablet) con un lector NFC USB de tipo teclado y el navegador abierto en la página del terminal. Asigna a cada empleado su tarjeta desde su ficha (Editar → Tarjeta NFC).'),
+    h('details', { class: 'help' },
+      h('summary', '¿Qué necesito y cómo lo monto?'),
+      h('ul',
+        h('li', h('strong', 'Lector: '), 'un lector NFC/RFID USB de 13,56 MHz «HID / emulación de teclado» (funciona sin instalar nada: al acercar la tarjeta escribe su código). Si las tarjetas son de 125 kHz, el lector debe ser de 125 kHz.'),
+        h('li', h('strong', 'Equipo: '), 'cualquiera con navegador, conectado a la misma red que la intranet.'),
+        h('li', h('strong', 'Activación: '), 'pulsa «Nuevo terminal» y elige «Usar este equipo» (si estás en él) o abre el enlace de activación en el equipo de la puerta.'),
+        h('li', h('strong', 'Modo quiosco: '), 'para que solo se vea el terminal, abre Chrome o Edge con la opción --kiosk, por ejemplo: msedge --kiosk "http://IP:3000/terminal.html" --edge-kiosk-type=fullscreen'))),
+    thisBrowser ? h('div', { class: 'alert alert-info small' }, 'Este navegador está activado como terminal. ', h('a', { href: '/terminal.html' }, 'Abrir el terminal')) : null,
+    table([
+      { label: 'Nombre', render: (k) => h('strong', k.name) },
+      { label: 'Creado', render: (k) => sqliteDate(k.created_at) },
+      { label: 'Último fichaje', render: (k) => sqliteDate(k.last_used_at) },
+      {
+        label: '',
+        className: 'actions',
+        render: (k) => button('Dar de baja', {
+          size: 'sm',
+          variant: 'ghost-danger',
+          iconName: 'trash',
+          onClick: async () => {
+            if (!(await confirmDialog(`¿Dar de baja el terminal «${k.name}»? Dejará de poder registrar fichajes.`, { title: 'Dar de baja terminal', confirmLabel: 'Dar de baja', danger: true }))) return;
+            await api.del(`/api/kiosks/${k.id}`);
+            toast('Terminal dado de baja');
+            ctx.refresh();
+          },
+        }),
+      },
+    ], kiosks, { empty: 'Todavía no hay terminales.' }),
+  ], { actions: button('Nuevo terminal', { variant: 'primary', iconName: 'plus', onClick: create }) });
+}
 
 export async function renderSettings(ctx) {
   ctx.setTitle('Configuración');
@@ -72,8 +185,11 @@ export async function renderSettings(ctx) {
     }
   });
 
+  const terminals = await terminalsCard(ctx, settings.public_url || suggestedUrl || location.origin);
+
   return h('div', { class: 'stack' },
     pageHeader('Configuración', 'Ajustes generales de la intranet'),
+    terminals,
     card('Avisos por email', [
       h('div', { class: 'settings-intro' },
         h('p', { class: 'muted' }, 'Cuando RR. HH. publica un anuncio puede avisar por email a toda la plantilla. Indica la cuenta de correo desde la que se enviarán los avisos.'),

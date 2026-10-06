@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { hashPassword, randomPassword } from './security.js';
+import { hashPassword, hashToken, randomPassword } from './security.js';
 import { localDate, workingDays } from './validate.js';
 
 const SCHEMA = `
@@ -113,7 +113,31 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Terminales de fichaje (equipo con lector NFC en la puerta). Se identifican con un token secreto.
+CREATE TABLE IF NOT EXISTS kiosks (
+  id           INTEGER PRIMARY KEY,
+  name         TEXT NOT NULL,
+  token_hash   TEXT NOT NULL UNIQUE,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  last_used_at TEXT
+);
 `;
+
+/** Añade una columna si todavía no existe (actualización de bases de datos de versiones anteriores). */
+function addColumn(db, table, column, definition) {
+  const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+  if (!exists) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+function migrate(db) {
+  addColumn(db, 'employees', 'nfc_uid', 'TEXT');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_nfc ON employees(nfc_uid) WHERE nfc_uid IS NOT NULL');
+  // Origen de cada fichaje («PC» o «Tarjeta · <terminal>») y marca de registros a revisar por RR. HH.
+  addColumn(db, 'time_entries', 'in_source', "TEXT NOT NULL DEFAULT 'PC'");
+  addColumn(db, 'time_entries', 'out_source', 'TEXT');
+  addColumn(db, 'time_entries', 'needs_review', 'INTEGER NOT NULL DEFAULT 0');
+}
 
 export function openDatabase(file) {
   if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true });
@@ -121,7 +145,8 @@ export function openDatabase(file) {
   db.exec('PRAGMA foreign_keys = ON;');
   if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
   db.exec(SCHEMA);
-  db.exec('PRAGMA user_version = 3;');
+  migrate(db);
+  db.exec('PRAGMA user_version = 4;');
   return db;
 }
 
@@ -160,6 +185,8 @@ export async function resetPassword(db, email, password = randomPassword()) {
   db.prepare('DELETE FROM sessions WHERE employee_id = ?').run(emp.id);
   return password;
 }
+
+export const DEMO_TERMINAL_TOKEN = 'demo-terminal';
 
 /** Datos de ejemplo para probar la intranet. Todos los usuarios de demo usan la contraseña indicada. */
 export async function seedDemo(db, { password = 'demo1234' } = {}) {
@@ -220,6 +247,10 @@ export async function seedDemo(db, { password = 'demo1234' } = {}) {
       .run('Comerciales', 'Siempre debe quedar un comercial atendiendo a los clientes');
     const member = db.prepare('INSERT INTO vacation_group_members (group_id, employee_id) VALUES (?, ?)');
     for (const id of [rep, rep2]) member.run(Number(group.lastInsertRowid), id);
+
+    // Tarjetas NFC de ejemplo (DEMO0001, DEMO0002…) y un terminal con token conocido.
+    db.prepare("UPDATE employees SET nfc_uid = 'DEMO' || substr('000' || id, -4) WHERE role <> 'admin'").run();
+    db.prepare('INSERT INTO kiosks (name, token_hash) VALUES (?, ?)').run('Puerta principal (demo)', hashToken(DEMO_TERMINAL_TOKEN));
 
     const ann = db.prepare('INSERT INTO announcements (title, body, pinned, author_id) VALUES (?, ?, ?, ?)');
     ann.run('Calendario laboral', 'Ya está disponible el calendario laboral del año. Recordad planificar vuestras vacaciones con al menos 15 días de antelación.', 1, hr);

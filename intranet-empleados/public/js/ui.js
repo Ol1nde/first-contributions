@@ -320,6 +320,7 @@ function buildField(field, value) {
       autocomplete: field.autocomplete ?? 'off',
     });
   }
+  if (field.preventEnter) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') e.preventDefault(); });
   const label = h('label', { for: id }, field.label, field.required ? h('span', { class: 'required', 'aria-hidden': 'true' }, ' *') : null);
   return { input, error, node: h('div', { class: `field ${field.full ? 'field-full' : ''}` }, label, input, help, error) };
 }

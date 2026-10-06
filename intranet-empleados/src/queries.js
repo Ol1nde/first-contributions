@@ -3,7 +3,7 @@ import { isHR } from './permissions.js';
 
 export const EMPLOYEE_SELECT = `
   SELECT e.id, e.first_name, e.last_name, e.email, e.phone, e.position, e.status, e.role,
-         e.hire_date, e.birth_date, e.vacation_days, e.created_at, e.updated_at,
+         e.hire_date, e.birth_date, e.vacation_days, e.created_at, e.updated_at, e.nfc_uid,
          e.department_id, d.name AS department_name,
          e.manager_id, CASE WHEN m.id IS NULL THEN NULL ELSE m.first_name || ' ' || m.last_name END AS manager_name,
          e.password_hash IS NOT NULL AS has_password

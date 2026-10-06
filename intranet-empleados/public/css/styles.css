@@ -133,7 +133,7 @@ p { margin: 0; }
 }
 .topbar-title { font-size: 1.05rem; font-weight: 600; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.menu-btn { display: none; position: relative; }
+.topbar .menu-btn { display: none; position: relative; }
 .menu-btn.has-unread::after { content: ''; position: absolute; top: 6px; right: 6px; width: 9px; height: 9px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 0 2px var(--surface); }
 .backdrop { display: none; }
 
@@ -425,7 +425,7 @@ a.toast-link:hover { text-decoration: underline; }
   }
   .menu-open .sidebar { transform: none; }
   .menu-open .backdrop { display: block; position: fixed; inset: 0; z-index: 40; background: rgba(10, 15, 25, 0.5); }
-  .menu-btn { display: inline-grid; }
+  .topbar .menu-btn { display: inline-grid; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   .topbar { padding: 0 16px; }
   .content { padding: 16px; }
@@ -456,3 +456,43 @@ a.toast-link:hover { text-decoration: underline; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* ---------- Terminal de fichaje (pantalla de la puerta) ---------- */
+
+.terminal-body { background: #0b1220; color: #e8edf5; overflow: hidden; }
+.terminal {
+  min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; gap: 24px;
+  padding: clamp(16px, 4vw, 48px); user-select: none; cursor: default;
+}
+.terminal-clock { text-align: center; }
+.terminal-time { font-size: clamp(4rem, 14vw, 9rem); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.terminal-date { font-size: clamp(1.1rem, 3vw, 1.7rem); color: #9fb0c8; margin-top: 8px; }
+
+.terminal-panel {
+  align-self: center; justify-self: center; width: min(820px, 100%);
+  display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center;
+  padding: clamp(24px, 5vw, 48px); border-radius: 24px; background: #141d30; border: 2px solid #22304a;
+  transition: background 0.2s, border-color 0.2s;
+}
+.terminal-icon { width: clamp(56px, 10vw, 88px); height: clamp(56px, 10vw, 88px); fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.terminal-title { font-size: clamp(1.6rem, 5vw, 3rem); font-weight: 700; line-height: 1.15; margin: 0; }
+.terminal-detail { font-size: clamp(1.05rem, 2.6vw, 1.5rem); color: inherit; opacity: 0.9; margin: 0; }
+.terminal-idle .terminal-icon { color: #6d8fff; animation: terminal-pulse 2s ease-in-out infinite; }
+.terminal-busy { opacity: 0.8; }
+.terminal-in { background: #0e3b2c; border-color: #1f8a5f; color: #d7fbe9; }
+.terminal-out { background: #13295a; border-color: #3d6fe0; color: #dfe8ff; }
+.terminal-warn { background: #3d2c0b; border-color: #c88a1a; color: #ffefcf; }
+.terminal-error { background: #4a1614; border-color: #d0453c; color: #ffe1de; }
+.terminal-setup { border-style: dashed; }
+.terminal-link { color: #9fb7ff; font-size: 1.1rem; }
+
+.terminal-footer { display: flex; justify-content: space-between; align-items: center; color: #6f819c; font-size: 0.95rem; }
+.terminal-fullscreen { background: transparent; color: #9fb0c8; border: 1px solid #2a3852; border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+.terminal-fullscreen:hover { background: #18233a; }
+
+@keyframes terminal-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.08); opacity: 0.75; } }
+@media (prefers-reduced-motion: reduce) { .terminal-idle .terminal-icon { animation: none; } }
+
+.code-box { display: flex; gap: 8px; }
+.code-box input { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; }
+pre.code { background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px 12px; font-size: 0.82rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all; margin: 8px 0 0; }
