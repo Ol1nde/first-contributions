@@ -48,6 +48,7 @@ const ICONS = {
   trash: ['M3 6h18', 'M8 6V4h8v2', 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6'],
   key: ['M15 7a4 4 0 1 1-3.87 5H9v2H7v2H4v-3l6.13-6.13A4 4 0 0 1 15 7z'],
   check: ['M20 6 9 17l-5-5'],
+  alert: ['M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', 'M12 9v4', 'M12 17h.01'],
   x: ['M18 6 6 18', 'M6 6l12 12'],
   pin: ['M12 17v5', 'M9 3h6l-1 6 3 3v2H7v-2l3-3z'],
   cake: ['M4 21h16v-8a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2z', 'M4 16c2 1 4 1 6 0s4-1 6 0 3 1 4 0', 'M12 11V8', 'M12 5.5c.8-.8.8-1.7 0-2.5-.8.8-.8 1.7 0 2.5z'],
@@ -275,6 +276,24 @@ function buildField(field, value) {
       h('option', { value: String(v ?? ''), selected: String(v ?? '') === String(value ?? '') }, label)));
   } else if (field.type === 'textarea') {
     input = h('textarea', { ...common, rows: field.rows ?? 4, maxlength: field.maxlength, value: value ?? '' });
+  } else if (field.type === 'checklist') {
+    // Selección múltiple con casillas y buscador. Devuelve un array con los valores marcados.
+    const selected = new Set((value ?? []).map(String));
+    const filter = h('input', { id, type: 'search', placeholder: 'Buscar…', autocomplete: 'off' });
+    const count = h('span', { class: 'muted small' });
+    const items = field.options.map(([v, label]) => ({
+      label: label.toLowerCase(),
+      row: h('label', { class: 'checklist-item' }, h('input', { type: 'checkbox', value: String(v), checked: selected.has(String(v)) }), h('span', label)),
+    }));
+    const list = h('div', { class: 'checklist', role: 'group', 'aria-label': field.label }, items.map((i) => i.row));
+    const updateCount = () => { count.textContent = `${list.querySelectorAll('input:checked').length} seleccionados`; };
+    filter.addEventListener('input', () => {
+      const q = filter.value.trim().toLowerCase();
+      for (const i of items) i.row.hidden = Boolean(q) && !i.label.includes(q);
+    });
+    list.addEventListener('change', updateCount);
+    updateCount();
+    input = h('div', { class: 'checklist-wrap', tabindex: '-1' }, h('div', { class: 'checklist-tools' }, filter, count), list);
   } else if (field.type === 'checkbox') {
     input = h('input', { ...common, type: 'checkbox', checked: Boolean(value) });
     return {
@@ -301,6 +320,9 @@ function buildField(field, value) {
 
 function readField(field, input) {
   if (field.type === 'checkbox') return input.checked;
+  if (field.type === 'checklist') {
+    return [...input.querySelectorAll('.checklist input:checked')].map((cb) => (field.numeric ? Number(cb.value) : cb.value));
+  }
   if (field.type === 'number') return input.value === '' ? null : Number(input.value);
   if (field.type === 'select' && field.numeric) return input.value === '' ? null : Number(input.value);
   return input.value;
@@ -329,7 +351,7 @@ export function formDialog({ title, fields, values = {}, submitLabel = 'Guardar'
         b.error.textContent = '';
         b.input.removeAttribute('aria-invalid');
       }
-      const missing = built.find((b) => b.field.required && b.field.type !== 'checkbox' && !String(b.input.value).trim());
+      const missing = built.find((b) => b.field.required && !['checkbox', 'checklist'].includes(b.field.type) && !String(b.input.value).trim());
       if (missing) {
         missing.error.textContent = `${missing.field.label} es obligatorio`;
         missing.input.setAttribute('aria-invalid', 'true');

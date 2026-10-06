@@ -16,6 +16,7 @@ vacaciones y ausencias con flujo de aprobación, registro de jornada (fichaje) y
 | **Empleados** | Directorio con búsqueda y filtros, ficha de cada empleado, alta/edición/baja, jerarquía (responsable y equipo a cargo), restablecer contraseñas y exportación a CSV. |
 | **Departamentos** | Alta, edición y eliminación (solo si no tienen empleados). |
 | **Ausencias** | Solicitudes de vacaciones, asuntos propios, baja médica, permisos…; cálculo de días laborables, control de saldo y solapamientos; aprobación o rechazo por el responsable o RR. HH. |
+| **Grupos sin coincidencia** | RR. HH. elige grupos de empleados que no pueden estar de vacaciones a la vez (p. ej. «Recepción»). Mientras un miembro tenga vacaciones pedidas o aprobadas, el resto del grupo no puede solicitar fechas que se solapen, y no se puede aprobar ninguna que coincida. |
 | **Fichaje** | Registro de entrada y salida, historial por periodo, correcciones auditadas (quién y cuándo) y exportación CSV para la inspección de trabajo. |
 | **Anuncios** | Tablón de comunicaciones internas con anuncios fijados. |
 | **Mi perfil** | Datos propios, cambio de teléfono y de contraseña. |
@@ -125,6 +126,7 @@ Variables de entorno (todas opcionales):
 | Aprobar/rechazar cualquier ausencia | | | ✔ | ✔ |
 | Ver datos personales (nacimiento, rol, saldo…) de otros | | | ✔ | ✔ |
 | Alta/edición de empleados, departamentos y anuncios | | | ✔ | ✔ |
+| Crear grupos de vacaciones sin coincidencia | | | ✔ | ✔ |
 | Corregir fichajes y exportar el registro completo | | | ✔ | ✔ |
 | Asignar los roles RR. HH. y Admin, modificar administradores | | | | ✔ |
 | Eliminar empleados | | | | ✔ |
@@ -214,9 +216,11 @@ Todas las rutas están bajo `/api` y devuelven JSON (salvo las exportaciones CSV
 | `GET /api/time/status` · `POST /api/time/clock-in` · `POST /api/time/clock-out` | Fichaje |
 | `GET /api/time` · `GET /api/time/export.csv` · `PUT /api/time/:id` | Historial · exportar · corregir |
 | `GET/POST /api/announcements` · `PUT/DELETE /api/announcements/:id` | Anuncios |
+| `GET/POST /api/vacation-groups` · `PUT/DELETE /api/vacation-groups/:id` | Grupos sin coincidencia de vacaciones (`member_ids`) |
 
 ## Limitaciones conocidas
 
 - Los días de ausencia se calculan de lunes a viernes; no se descuentan festivos nacionales ni locales.
 - Las vacaciones se imputan al año de la fecha de inicio (las que cruzan de año deben pedirse por separado).
+- Los grupos sin coincidencia se aplican solo a las vacaciones (no a bajas, permisos ni asuntos propios).
 - No envía notificaciones por email.

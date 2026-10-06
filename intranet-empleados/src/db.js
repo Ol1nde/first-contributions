@@ -76,6 +76,21 @@ CREATE TABLE IF NOT EXISTS time_entries (
   edited_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_time_employee ON time_entries(employee_id, clock_in);
+
+-- Grupos de empleados que no pueden coincidir de vacaciones.
+CREATE TABLE IF NOT EXISTS vacation_groups (
+  id          INTEGER PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  description TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS vacation_group_members (
+  group_id    INTEGER NOT NULL REFERENCES vacation_groups(id) ON DELETE CASCADE,
+  employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  PRIMARY KEY (group_id, employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_vacation_group_members_employee ON vacation_group_members(employee_id);
 `;
 
 export function openDatabase(file) {
@@ -84,7 +99,7 @@ export function openDatabase(file) {
   db.exec('PRAGMA foreign_keys = ON;');
   if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
   db.exec(SCHEMA);
-  db.exec('PRAGMA user_version = 1;');
+  db.exec('PRAGMA user_version = 2;');
   return db;
 }
 
@@ -165,7 +180,7 @@ export async function seedDemo(db, { password = 'demo1234' } = {}) {
     const dev1 = add('Ana', 'García Pérez', 'ana.garcia@empresa.local', '600 111 005', 'Desarrolladora sénior', 'Tecnología', cto, '2019-04-01', birthdayIn(12, 1990), 'empleado');
     add('Pablo', 'Fernández Díaz', 'pablo.fernandez@empresa.local', '600 111 006', 'Técnico de sistemas', 'Tecnología', cto, shift(-10), '1995-08-19', 'empleado');
     const rep = add('Marta', 'Romero Castro', 'marta.romero@empresa.local', '600 111 007', 'Comercial', 'Ventas', sales, '2021-02-08', '1992-12-05', 'empleado');
-    add('Sergio', 'Moreno Gil', 'sergio.moreno@empresa.local', '600 111 008', 'Comercial', 'Ventas', sales, '2022-10-03', birthdayIn(25, 1988), 'empleado');
+    const rep2 = add('Sergio', 'Moreno Gil', 'sergio.moreno@empresa.local', '600 111 008', 'Comercial', 'Ventas', sales, '2022-10-03', birthdayIn(25, 1988), 'empleado');
     add('Laura', 'Jiménez Vidal', 'laura.jimenez@empresa.local', '600 111 009', 'Técnica de nóminas', 'Recursos Humanos', hr, '2020-06-15', '1987-03-30', 'empleado');
     add('Diego', 'Álvarez Rubio', 'diego.alvarez@empresa.local', '600 111 010', 'Contable', 'Administración y Finanzas', ceo, '2018-07-02', '1983-09-09', 'empleado');
 
@@ -178,6 +193,11 @@ export async function seedDemo(db, { password = 'demo1234' } = {}) {
     addLeave(dev1, 'vacaciones', shift(14), shift(18), 'Viaje familiar', 'pendiente');
     addLeave(rep, 'asuntos_propios', shift(-1), shift(1), 'Mudanza', 'aprobada', sales);
     addLeave(dev1, 'vacaciones', `${year}-01-02`, `${year}-01-05`, 'Navidades', 'aprobada', cto);
+
+    const group = db.prepare('INSERT INTO vacation_groups (name, description) VALUES (?, ?)')
+      .run('Comerciales', 'Siempre debe quedar un comercial atendiendo a los clientes');
+    const member = db.prepare('INSERT INTO vacation_group_members (group_id, employee_id) VALUES (?, ?)');
+    for (const id of [rep, rep2]) member.run(Number(group.lastInsertRowid), id);
 
     const ann = db.prepare('INSERT INTO announcements (title, body, pinned, author_id) VALUES (?, ?, ?, ?)');
     ann.run('Calendario laboral', 'Ya está disponible el calendario laboral del año. Recordad planificar vuestras vacaciones con al menos 15 días de antelación.', 1, hr);

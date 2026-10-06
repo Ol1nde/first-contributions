@@ -8,6 +8,7 @@ import registerDepartments from './routes/departments.js';
 import registerEmployees from './routes/employees.js';
 import registerLeaves from './routes/leaves.js';
 import registerTime from './routes/time.js';
+import registerVacationGroups from './routes/vacation-groups.js';
 import { hashToken, LoginLimiter } from './security.js';
 import { serveMemory, serveStatic } from './static.js';
 
@@ -42,6 +43,7 @@ export function createApp({
   registerLeaves(router, deps);
   registerTime(router, deps);
   registerAnnouncements(router, deps);
+  registerVacationGroups(router, deps);
 
   if (!publicDir && !staticFiles) throw new Error('createApp necesita publicDir o staticFiles');
   const root = publicDir ? resolve(publicDir) : null;

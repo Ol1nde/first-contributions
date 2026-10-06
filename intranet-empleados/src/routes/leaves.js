@@ -2,6 +2,7 @@ import { HttpError } from '../http.js';
 import { canSupervise, forbidden, isHR } from '../permissions.js';
 import { getEmployeeOr404, vacationBalance } from '../queries.js';
 import { daysBetween, localDate, Validator, workingDays } from '../validate.js';
+import { conflictMessage, findVacationConflict } from './vacation-groups.js';
 
 export const LEAVE_TYPES = ['vacaciones', 'asuntos_propios', 'baja_medica', 'permiso_retribuido', 'otro'];
 const LEAVE_STATUSES = ['pendiente', 'aprobada', 'rechazada', 'cancelada'];
@@ -77,7 +78,15 @@ export default function registerLeaves(router, { db }) {
 
     const rows = db.prepare(`${SELECT} WHERE ${where.join(' AND ')}
       ORDER BY l.status = 'pendiente' DESC, l.start_date DESC, l.id DESC`).all(...params);
-    return { leaves: rows.map((r) => shape(ctx.user, r)) };
+    // Avisa de las solicitudes pendientes que chocan con un compañero de su grupo de vacaciones.
+    return {
+      leaves: rows.map((r) => ({
+        ...shape(ctx.user, r),
+        conflict: r.type === 'vacaciones' && r.status === 'pendiente'
+          ? findVacationConflict(db, r.employee_id, r.start_date, r.end_date, { excludeLeaveId: r.id })
+          : null,
+      })),
+    };
   });
 
   router.get('/api/leaves/balance', (ctx) => {
@@ -128,6 +137,11 @@ export default function registerLeaves(router, { db }) {
     `).get(employeeId, data.end_date, data.start_date);
     if (overlap) throw new HttpError(409, 'Ya existe una solicitud pendiente o aprobada que se solapa con esas fechas');
 
+    if (data.type === 'vacaciones') {
+      const conflict = findVacationConflict(db, employeeId, data.start_date, data.end_date);
+      if (conflict) throw new HttpError(409, conflictMessage(conflict, 'No se pueden solicitar esas fechas'));
+    }
+
     const { lastInsertRowid } = db.prepare(`
       INSERT INTO leave_requests (employee_id, type, start_date, end_date, days, reason)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -143,6 +157,13 @@ export default function registerLeaves(router, { db }) {
     v.oneOf('decision', 'Decisión', ['aprobada', 'rechazada'], { required: true });
     v.string('comment', 'Comentario', { max: 1000 });
     const data = v.done();
+    if (data.decision === 'aprobada' && leave.type === 'vacaciones') {
+      const conflict = findVacationConflict(db, leave.employee_id, leave.start_date, leave.end_date, {
+        statuses: ['aprobada'],
+        excludeLeaveId: leave.id,
+      });
+      if (conflict) throw new HttpError(409, conflictMessage(conflict, 'No se puede aprobar'));
+    }
     db.prepare(`
       UPDATE leave_requests SET status = ?, review_comment = ?, reviewed_by = ?, reviewed_at = ?
       WHERE id = ? AND status = 'pendiente'

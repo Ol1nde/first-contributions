@@ -364,3 +364,88 @@ describe('interfaz embebida (ejecutable)', () => {
     }
   });
 });
+
+describe('grupos de vacaciones sin coincidencia', () => {
+  let app;
+  const admin = client();
+  const people = {};
+  const as = {};
+
+  before(async () => {
+    app = await startApp();
+    await ensureAdmin(app.db, ADMIN);
+    Object.assign(admin, client(app.url));
+    await admin.login(ADMIN.email, ADMIN.password);
+    for (const name of ['ana', 'bea', 'carlos', 'dani', 'eva']) {
+      const res = await admin.post('/api/employees', { first_name: name, last_name: 'Prueba', email: `${name}@g.test`, password: 'password123' });
+      people[name] = res.data.employee.id;
+      as[name] = client(app.url);
+      await as[name].login(`${name}@g.test`, 'password123');
+    }
+  });
+
+  after(() => app.close());
+
+  test('solo RR. HH. gestiona grupos y exige al menos dos miembros', async () => {
+    assert.equal((await as.ana.post('/api/vacation-groups', { name: 'X', member_ids: [people.ana, people.bea] })).status, 403);
+    const tooFew = await admin.post('/api/vacation-groups', { name: 'Recepción', member_ids: [people.ana] });
+    assert.equal(tooFew.status, 400);
+    assert.ok(tooFew.data.details.member_ids);
+    const created = await admin.post('/api/vacation-groups', { name: 'Recepción', member_ids: [people.ana, people.bea] });
+    assert.equal(created.status, 200);
+    assert.deepEqual(created.data.group.members.map((m) => m.id).sort(), [people.ana, people.bea].sort());
+  });
+
+  test('un miembro no puede pedir vacaciones que coincidan con otro del grupo', async () => {
+    const week = futureWorkWeek(2);
+    assert.equal((await as.ana.post('/api/leaves', { type: 'vacaciones', start_date: week.start, end_date: week.end })).status, 200);
+
+    const clash = await as.bea.post('/api/leaves', { type: 'vacaciones', start_date: shiftDate(week.start, 2), end_date: shiftDate(week.end, 3) });
+    assert.equal(clash.status, 409);
+    assert.match(clash.data.error, /ana Prueba/);
+    assert.match(clash.data.error, /Recepción/);
+
+    // Otro tipo de ausencia, otras fechas u otra persona fuera del grupo: permitido.
+    assert.equal((await as.bea.post('/api/leaves', { type: 'asuntos_propios', start_date: week.start, end_date: week.start })).status, 200);
+    const other = futureWorkWeek(4);
+    assert.equal((await as.bea.post('/api/leaves', { type: 'vacaciones', start_date: other.start, end_date: other.end })).status, 200);
+    assert.equal((await as.carlos.post('/api/leaves', { type: 'vacaciones', start_date: week.start, end_date: week.end })).status, 200);
+  });
+
+  test('los empleados ven sus grupos y RR. HH. todos', async () => {
+    const mine = await as.bea.get('/api/vacation-groups');
+    assert.deepEqual(mine.data.groups.map((g) => g.name), ['Recepción']);
+    assert.equal(mine.data.groups[0].overlaps, undefined);
+    assert.equal((await as.carlos.get('/api/vacation-groups')).data.groups.length, 0);
+  });
+
+  test('al aprobar se bloquean solapes previos a la creación del grupo', async () => {
+    const week = futureWorkWeek(6);
+    const d1 = await as.dani.post('/api/leaves', { type: 'vacaciones', start_date: week.start, end_date: week.end });
+    const e1 = await as.eva.post('/api/leaves', { type: 'vacaciones', start_date: week.start, end_date: week.end });
+    assert.equal(d1.status, 200);
+    assert.equal(e1.status, 200);
+
+    const group = await admin.post('/api/vacation-groups', { name: 'Almacén', member_ids: [people.dani, people.eva] });
+    assert.equal(group.data.group.overlaps.length, 1);
+
+    const queue = await admin.get('/api/leaves?scope=review&status=pendiente');
+    const pendingEva = queue.data.leaves.find((l) => l.id === e1.data.leave.id);
+    assert.equal(pendingEva.conflict.employee_name, 'dani Prueba');
+
+    assert.equal((await admin.put(`/api/leaves/${d1.data.leave.id}/review`, { decision: 'aprobada' })).status, 200);
+    const blocked = await admin.put(`/api/leaves/${e1.data.leave.id}/review`, { decision: 'aprobada' });
+    assert.equal(blocked.status, 409);
+    assert.match(blocked.data.error, /No se puede aprobar/);
+    assert.equal((await admin.put(`/api/leaves/${e1.data.leave.id}/review`, { decision: 'rechazada', comment: 'Coincide' })).status, 200);
+  });
+
+  test('al eliminar el grupo desaparece la restricción', async () => {
+    const { groups } = (await admin.get('/api/vacation-groups')).data;
+    const reception = groups.find((g) => g.name === 'Recepción');
+    assert.equal((await admin.del(`/api/vacation-groups/${reception.id}`)).status, 200);
+    const week = futureWorkWeek(2);
+    const res = await as.bea.post('/api/leaves', { type: 'vacaciones', start_date: shiftDate(week.start, 1), end_date: shiftDate(week.start, 1) });
+    assert.equal(res.status, 200);
+  });
+});
