@@ -48,6 +48,9 @@ const ICONS = {
   trash: ['M3 6h18', 'M8 6V4h8v2', 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6'],
   key: ['M15 7a4 4 0 1 1-3.87 5H9v2H7v2H4v-3l6.13-6.13A4 4 0 0 1 15 7z'],
   check: ['M20 6 9 17l-5-5'],
+  settings: ['M4 21v-7', 'M4 10V3', 'M12 21v-9', 'M12 8V3', 'M20 21v-5', 'M20 12V3', 'M1 14h6', 'M9 8h6', 'M17 16h6'],
+  bell: ['M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9', 'M13.73 21a2 2 0 0 1-3.46 0'],
+  mail: ['M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z', 'M22 6l-10 7L2 6'],
   alert: ['M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', 'M12 9v4', 'M12 17h.01'],
   x: ['M18 6 6 18', 'M6 6l12 12'],
   pin: ['M12 17v5', 'M9 3h6l-1 6 3 3v2H7v-2l3-3z'],
@@ -222,12 +225,15 @@ export function table(columns, rows, { empty = 'No hay datos que mostrar.' } = {
 }
 
 let toastHost;
-export function toast(message, type = 'success') {
+/** Mensaje temporal. Con `href` el aviso es un enlace (p. ej. a un anuncio nuevo). */
+export function toast(message, type = 'success', { href, duration = 4000 } = {}) {
   toastHost ??= document.body.appendChild(h('div', { class: 'toasts', role: 'status', 'aria-live': 'polite' }));
-  const el = h('div', { class: `toast toast-${type}` }, message);
+  const el = href
+    ? h('a', { class: `toast toast-${type} toast-link`, href, onclick: () => el.remove() }, message)
+    : h('div', { class: `toast toast-${type}` }, message);
   toastHost.append(el);
-  setTimeout(() => el.classList.add('toast-hide'), 3600);
-  setTimeout(() => el.remove(), 4000);
+  setTimeout(() => el.classList.add('toast-hide'), duration - 400);
+  setTimeout(() => el.remove(), duration);
 }
 
 export function openDialog({ title, body, footer, wide = false, onClose }) {
@@ -269,7 +275,7 @@ function buildField(field, value) {
   const id = `f-${field.name}-${++fieldSeq}`;
   const error = h('p', { class: 'field-error', id: `${id}-error` });
   const help = field.help ? h('p', { class: 'field-help' }, field.help) : null;
-  const common = { id, name: field.name, required: field.required, 'aria-describedby': `${id}-error` };
+  const common = { id, name: field.name, required: field.required, disabled: field.disabled, 'aria-describedby': `${id}-error` };
   let input;
   if (field.type === 'select') {
     input = h('select', common, field.options.map(([v, label]) =>
@@ -329,56 +335,77 @@ function readField(field, input) {
 }
 
 /**
- * Formulario en diálogo modal. `onSubmit(values)` puede lanzar un ApiError: sus `details`
- * se muestran junto a cada campo. Devuelve el resultado de `onSubmit` o null si se cancela.
+ * Formulario a partir de una lista de campos. `onSubmit(values)` puede lanzar un ApiError: sus `details`
+ * se muestran junto a cada campo. Devuelve el formulario y sus controles (por nombre).
  */
-export function formDialog({ title, fields, values = {}, submitLabel = 'Guardar', submitVariant = 'primary', intro, onSubmit, wide }) {
+export function buildForm({
+  fields, values = {}, submitLabel = 'Guardar', submitVariant = 'primary', intro, onSubmit, onSuccess, onCancel, extraActions,
+}) {
+  const built = fields.map((f) => ({ field: f, ...buildField(f, values[f.name]) }));
+  const formError = h('p', { class: 'form-error', role: 'alert' });
+  const submit = button(submitLabel, { variant: submitVariant, type: 'submit' });
+  const form = h('form', { class: 'form', novalidate: true },
+    intro ? h('p', { class: 'muted' }, intro) : null,
+    formError,
+    h('div', { class: 'form-grid' }, built.map((b) => b.node)),
+    h('div', { class: 'form-actions' }, extraActions, onCancel ? button('Cancelar', { onClick: onCancel }) : null, submit));
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    formError.textContent = '';
+    for (const b of built) {
+      b.error.textContent = '';
+      b.input.removeAttribute('aria-invalid');
+    }
+    const missing = built.find((b) => b.field.required && !['checkbox', 'checklist'].includes(b.field.type) && !String(b.input.value).trim());
+    if (missing) {
+      missing.error.textContent = `${missing.field.label} es obligatorio`;
+      missing.input.setAttribute('aria-invalid', 'true');
+      missing.input.focus();
+      return;
+    }
+    const data = Object.fromEntries(built.map((b) => [b.field.name, readField(b.field, b.input)]));
+    submit.disabled = true;
+    try {
+      const result = (await onSubmit(data)) ?? true;
+      onSuccess?.(result);
+    } catch (err) {
+      formError.textContent = err.message;
+      for (const [name, message] of Object.entries(err.details ?? {})) {
+        const b = built.find((x) => x.field.name === name);
+        if (b) {
+          b.error.textContent = message;
+          b.input.setAttribute('aria-invalid', 'true');
+        }
+      }
+      built.find((b) => b.input.hasAttribute('aria-invalid'))?.input.focus();
+    } finally {
+      submit.disabled = false;
+    }
+  });
+
+  return {
+    form,
+    inputs: Object.fromEntries(built.map((b) => [b.field.name, b.input])),
+    values: () => Object.fromEntries(built.map((b) => [b.field.name, readField(b.field, b.input)])),
+    focus: () => built[0]?.input.focus(),
+  };
+}
+
+/** Formulario en diálogo modal. Devuelve el resultado de `onSubmit` o null si se cancela. */
+export function formDialog({ title, wide, ...options }) {
   return new Promise((resolve) => {
     let result = null;
-    const built = fields.map((f) => ({ field: f, ...buildField(f, values[f.name]) }));
-    const formError = h('p', { class: 'form-error', role: 'alert' });
-    const submit = button(submitLabel, { variant: submitVariant, type: 'submit' });
-    const form = h('form', { class: 'form', novalidate: true },
-      intro ? h('p', { class: 'muted' }, intro) : null,
-      formError,
-      h('div', { class: 'form-grid' }, built.map((b) => b.node)),
-      h('div', { class: 'form-actions' }, button('Cancelar', { onClick: () => close() }), submit));
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      formError.textContent = '';
-      for (const b of built) {
-        b.error.textContent = '';
-        b.input.removeAttribute('aria-invalid');
-      }
-      const missing = built.find((b) => b.field.required && !['checkbox', 'checklist'].includes(b.field.type) && !String(b.input.value).trim());
-      if (missing) {
-        missing.error.textContent = `${missing.field.label} es obligatorio`;
-        missing.input.setAttribute('aria-invalid', 'true');
-        missing.input.focus();
-        return;
-      }
-      const data = Object.fromEntries(built.map((b) => [b.field.name, readField(b.field, b.input)]));
-      submit.disabled = true;
-      try {
-        result = (await onSubmit(data)) ?? true;
+    let close = () => {};
+    const { form, focus } = buildForm({
+      ...options,
+      onSuccess: (value) => {
+        result = value;
         close();
-      } catch (err) {
-        formError.textContent = err.message;
-        for (const [name, message] of Object.entries(err.details ?? {})) {
-          const b = built.find((x) => x.field.name === name);
-          if (b) {
-            b.error.textContent = message;
-            b.input.setAttribute('aria-invalid', 'true');
-          }
-        }
-        built.find((b) => b.input.hasAttribute('aria-invalid'))?.input.focus();
-      } finally {
-        submit.disabled = false;
-      }
+      },
+      onCancel: () => close(),
     });
-
-    const { close } = openDialog({ title, body: form, wide, onClose: () => resolve(result) });
-    built[0]?.input.focus();
+    ({ close } = openDialog({ title, body: form, wide, onClose: () => resolve(result) }));
+    focus();
   });
 }

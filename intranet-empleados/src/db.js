@@ -91,6 +91,28 @@ CREATE TABLE IF NOT EXISTS vacation_group_members (
   PRIMARY KEY (group_id, employee_id)
 );
 CREATE INDEX IF NOT EXISTS idx_vacation_group_members_employee ON vacation_group_members(employee_id);
+
+-- Último anuncio visto por cada empleado (para los avisos de anuncios nuevos).
+CREATE TABLE IF NOT EXISTS announcement_seen (
+  employee_id INTEGER PRIMARY KEY REFERENCES employees(id) ON DELETE CASCADE,
+  last_id     INTEGER NOT NULL DEFAULT 0
+);
+
+-- Resultado del aviso por email de cada anuncio.
+CREATE TABLE IF NOT EXISTS announcement_emails (
+  announcement_id INTEGER PRIMARY KEY REFERENCES announcements(id) ON DELETE CASCADE,
+  status          TEXT NOT NULL CHECK (status IN ('enviando', 'enviado', 'error')),
+  recipients      INTEGER NOT NULL DEFAULT 0,
+  sent            INTEGER NOT NULL DEFAULT 0,
+  failed          INTEGER NOT NULL DEFAULT 0,
+  error           TEXT NOT NULL DEFAULT '',
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
 
 export function openDatabase(file) {
@@ -99,7 +121,7 @@ export function openDatabase(file) {
   db.exec('PRAGMA foreign_keys = ON;');
   if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
   db.exec(SCHEMA);
-  db.exec('PRAGMA user_version = 2;');
+  db.exec('PRAGMA user_version = 3;');
   return db;
 }
 

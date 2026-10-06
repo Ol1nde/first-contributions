@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './app.js';
 import { ensureAdmin, isEmpty, openDatabase, resetPassword, seedDemo } from './db.js';
+import { lanAddresses } from './network.js';
 
 const DEMO_PASSWORD = 'demo1234';
 
@@ -16,12 +16,6 @@ function openUrl(url) {
     child.on('error', () => {});
     child.unref();
   } catch { /* sin navegador disponible */ }
-}
-
-function lanAddresses(port) {
-  return Object.values(networkInterfaces()).flat()
-    .filter((a) => a && a.family === 'IPv4' && !a.internal)
-    .map((a) => `http://${a.address}:${port}`);
 }
 
 function listen(server, port, host) {
@@ -89,7 +83,7 @@ export async function start({ baseDir, publicDir, staticFiles, argv = [], env = 
 
   console.log('\n  Intranet de empleados en marcha');
   console.log(`  · En este equipo:      ${url}`);
-  for (const address of lanAddresses(port)) console.log(`  · Desde otros equipos: ${address}`);
+  for (const address of lanAddresses()) console.log(`  · Desde otros equipos: http://${address}:${port}`);
   console.log(`  · Datos guardados en:  ${dbFile}`);
   if (isEmpty(db)) console.log(`\n  PRIMER USO: abre ${url} en este equipo para crear la cuenta de administrador.`);
   console.log('\n  Mantén esta ventana abierta mientras se use la intranet. Para detenerla, ciérrala o pulsa Ctrl+C.\n');

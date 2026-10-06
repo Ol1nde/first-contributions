@@ -1,4 +1,5 @@
 import { api, onUnauthorized } from './api.js';
+import { createAnnouncementNotifier } from './notifier.js';
 import { avatar, clear, emptyState, fullName, h, icon, ROLE_LABELS } from './ui.js';
 import { renderAnnouncements } from './views/announcements.js';
 import { renderDashboard } from './views/dashboard.js';
@@ -8,6 +9,7 @@ import { renderEmployees } from './views/employees.js';
 import { renderLeaves } from './views/leaves.js';
 import { renderLogin } from './views/login.js';
 import { renderProfile } from './views/profile.js';
+import { renderSettings } from './views/settings.js';
 import { renderSetup } from './views/setup.js';
 import { renderTime } from './views/time.js';
 
@@ -19,6 +21,7 @@ const NAV = [
   { path: 'fichaje', label: 'Fichaje', icon: 'clock' },
   { path: 'anuncios', label: 'Anuncios', icon: 'megaphone' },
   { path: 'perfil', label: 'Mi perfil', icon: 'user' },
+  { path: 'configuracion', label: 'Configuración', icon: 'settings', admin: true },
 ];
 
 const ROUTES = [
@@ -30,10 +33,33 @@ const ROUTES = [
   { pattern: /^fichaje$/, nav: 'fichaje', view: renderTime },
   { pattern: /^anuncios$/, nav: 'anuncios', view: renderAnnouncements },
   { pattern: /^perfil$/, nav: 'perfil', view: renderProfile },
+  { pattern: /^configuracion$/, nav: 'configuracion', view: renderSettings },
 ];
 
 const app = document.getElementById('app');
-const state = { user: null, cleanup: null, renderId: 0, shell: null };
+const state = { user: null, cleanup: null, renderId: 0, shell: null, title: 'Intranet', unread: 0 };
+
+function applyTitle() {
+  document.title = `${state.unread ? `(${state.unread}) ` : ''}${state.title} · Intranet`;
+}
+
+const notifier = createAnnouncementNotifier({
+  onCount: (count) => {
+    state.unread = count;
+    const badge = state.shell?.nav.querySelector('[data-nav="anuncios"] .nav-badge');
+    if (badge) {
+      badge.textContent = String(count);
+      badge.hidden = count === 0;
+    }
+    state.shell?.layout.querySelector('.menu-btn').classList.toggle('has-unread', count > 0);
+    if (state.user) applyTitle();
+  },
+  // Si se está viendo el inicio o el tablón, se actualiza para mostrar el anuncio recién llegado.
+  onNew: () => {
+    if (['', 'anuncios'].includes(parseHash().path) && !document.querySelector('dialog[open]')) render();
+  },
+  isViewingAnnouncements: () => parseHash().path === 'anuncios',
+});
 
 function parseHash() {
   const raw = location.hash.replace(/^#\/?/, '');
@@ -42,6 +68,7 @@ function parseHash() {
 }
 
 function showLogin(message) {
+  notifier.stop();
   state.cleanup?.();
   state.cleanup = null;
   state.user = null;
@@ -91,8 +118,10 @@ function renderShell() {
   const layout = h('div', { class: 'layout' });
   const toggleMenu = (open) => layout.classList.toggle('menu-open', open);
 
-  const nav = h('nav', { class: 'nav', 'aria-label': 'Secciones' }, NAV.map((item) =>
-    h('a', { class: 'nav-link', href: `#/${item.path}`, dataset: { nav: item.path } }, icon(item.icon), h('span', item.label))));
+  const items = NAV.filter((item) => !item.admin || state.user.role === 'admin');
+  const nav = h('nav', { class: 'nav', 'aria-label': 'Secciones' }, items.map((item) =>
+    h('a', { class: 'nav-link', href: `#/${item.path}`, dataset: { nav: item.path } }, icon(item.icon), h('span', item.label),
+      item.path === 'anuncios' ? h('span', { class: 'nav-badge', hidden: true, 'aria-label': 'anuncios sin leer' }) : null)));
 
   layout.append(
     h('aside', { class: 'sidebar' },
@@ -109,6 +138,7 @@ function renderShell() {
 
   clear(app).append(layout);
   state.shell = { layout, title, nav, userSlot, view: layout.querySelector('#view'), toggleMenu };
+  notifier.start();
 }
 
 async function render() {
@@ -127,7 +157,8 @@ async function render() {
   const id = ++state.renderId;
   const setTitle = (text) => {
     shell.title.textContent = text;
-    document.title = `${text} · Intranet`;
+    state.title = text;
+    applyTitle();
   };
 
   if (!route) {
@@ -146,6 +177,7 @@ async function render() {
     isCurrent: () => id === state.renderId,
     onCleanup: (fn) => { state.cleanup = fn; },
     refresh: () => render(),
+    refreshUnread: () => notifier.check(),
     setUser: (user) => {
       state.user = user;
       clear(shell.userSlot).append(userChip());

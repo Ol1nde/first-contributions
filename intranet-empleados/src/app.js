@@ -7,6 +7,7 @@ import registerDashboard from './routes/dashboard.js';
 import registerDepartments from './routes/departments.js';
 import registerEmployees from './routes/employees.js';
 import registerLeaves from './routes/leaves.js';
+import registerSettings from './routes/settings.js';
 import registerTime from './routes/time.js';
 import registerVacationGroups from './routes/vacation-groups.js';
 import { hashToken, LoginLimiter } from './security.js';
@@ -35,7 +36,7 @@ export function createApp({
   logger = console,
 }) {
   const router = new Router();
-  const deps = { db, limiter: new LoginLimiter(), sessionTtlMs, secureCookies };
+  const deps = { db, limiter: new LoginLimiter(), sessionTtlMs, secureCookies, logger };
   registerAuth(router, deps);
   registerDashboard(router, deps);
   registerEmployees(router, deps);
@@ -44,6 +45,7 @@ export function createApp({
   registerTime(router, deps);
   registerAnnouncements(router, deps);
   registerVacationGroups(router, deps);
+  registerSettings(router, deps);
 
   if (!publicDir && !staticFiles) throw new Error('createApp necesita publicDir o staticFiles');
   const root = publicDir ? resolve(publicDir) : null;
@@ -60,6 +62,12 @@ export function createApp({
       if (forwarded) return forwarded.split(',').at(-1).trim();
     }
     return req.socket.remoteAddress ?? '';
+  }
+
+  function requestOrigin(req) {
+    const host = (trustProxy && req.headers['x-forwarded-host']) || req.headers.host || 'localhost';
+    const proto = trustProxy && req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+    return `${proto}://${host}`;
   }
 
   /** Protección CSRF adicional a la cookie SameSite=Strict: el origen debe ser el propio servidor. */
@@ -112,6 +120,7 @@ export function createApp({
         user: session.user,
         sessionId: session.id,
         ip: clientIp(req),
+        origin: requestOrigin(req),
         setCookie: (cookie) => cookies.push(cookie),
       };
       const result = await route.handler(ctx);

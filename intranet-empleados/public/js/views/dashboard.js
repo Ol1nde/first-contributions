@@ -41,7 +41,7 @@ export async function renderDashboard(ctx) {
     stat('Ausentes hoy', data.stats.absent_today, 'calendar', '#/ausencias'));
 
   const announcements = card('Anuncios', list(data.announcements, 'No hay anuncios publicados.', (a) => [
-    h('div', { class: 'list-title' }, a.pinned ? badge('Fijado', 'info') : null, h('strong', a.title)),
+    h('div', { class: 'list-title' }, a.unread ? badge('Nuevo', 'success') : null, a.pinned ? badge('Fijado', 'info') : null, h('strong', a.title)),
     h('p', { class: 'clamp' }, a.body),
     h('span', { class: 'muted small' }, `${a.author_name ?? 'Anónimo'} · ${fmtDate(a.created_at)}`),
   ]), { actions: linkButton('Ver todos', '#/anuncios') });

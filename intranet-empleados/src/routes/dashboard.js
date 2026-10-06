@@ -91,7 +91,7 @@ export default function registerDashboard(router, { db }) {
       absences,
       birthdays,
       new_hires: newHires,
-      announcements: latestAnnouncements(db, 3),
+      announcements: latestAnnouncements(db, user, 3),
     };
   });
 }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import net from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -447,5 +448,196 @@ describe('grupos de vacaciones sin coincidencia', () => {
     const week = futureWorkWeek(2);
     const res = await as.bea.post('/api/leaves', { type: 'vacaciones', start_date: shiftDate(week.start, 1), end_date: shiftDate(week.start, 1) });
     assert.equal(res.status, 200);
+  });
+});
+
+/** Servidor SMTP simulado: guarda los mensajes recibidos. */
+async function fakeSmtp({ authOk = true } = {}) {
+  const messages = [];
+  const logins = [];
+  const server = net.createServer((sock) => {
+    let buffer = '';
+    let mode = 'command';
+    let current = { rcpts: [], data: '' };
+    const send = (line) => sock.write(`${line}\r\n`);
+    send('220 fake.smtp ESMTP');
+    sock.on('data', (chunk) => {
+      buffer += chunk.toString();
+      let i;
+      while ((i = buffer.indexOf('\r\n')) >= 0) {
+        const line = buffer.slice(0, i);
+        buffer = buffer.slice(i + 2);
+        if (mode === 'data') {
+          if (line === '.') {
+            messages.push(current);
+            current = { rcpts: [], data: '' };
+            mode = 'command';
+            send('250 OK');
+          } else {
+            current.data += `${line}\r\n`;
+          }
+          continue;
+        }
+        const upper = line.toUpperCase();
+        if (upper.startsWith('EHLO')) { send('250-fake.smtp'); send('250 AUTH PLAIN LOGIN'); }
+        else if (upper.startsWith('AUTH PLAIN')) {
+          logins.push(Buffer.from(line.slice(11), 'base64').toString().split('\0').slice(1));
+          send(authOk ? '235 OK' : '535 5.7.8 Authentication failed');
+        }
+        else if (upper.startsWith('MAIL FROM')) { current.from = line.match(/<(.*)>/)[1]; send('250 OK'); }
+        else if (upper.startsWith('RCPT TO')) {
+          const address = line.match(/<(.*)>/)[1];
+          if (address.endsWith('@rechazado.test')) send('550 No such user');
+          else { current.rcpts.push(address); send('250 OK'); }
+        }
+        else if (upper === 'DATA') { mode = 'data'; send('354 Go ahead'); }
+        else if (upper === 'RSET') send('250 OK');
+        else if (upper === 'QUIT') { send('221 Bye'); sock.end(); }
+        else send('502 Unknown command');
+      }
+    });
+  });
+  await new Promise((done) => server.listen(0, '127.0.0.1', done));
+  return { port: server.address().port, messages, logins, close: () => new Promise((done) => server.close(done)) };
+}
+
+function decodeMail(raw) {
+  const [head, body] = raw.split('\r\n\r\n');
+  const subject = head.match(/^Subject: ([\s\S]*?)\r\n(?!\s)/m)[1]
+    .replace(/\r\n /g, '')
+    .replace(/=\?UTF-8\?B\?([^?]+)\?=/g, (_, b) => Buffer.from(b, 'base64').toString());
+  return { subject, text: Buffer.from(body.replace(/\s/g, ''), 'base64').toString() };
+}
+
+async function waitFor(check, timeout = 3000) {
+  const start = Date.now();
+  for (;;) {
+    const value = await check();
+    if (value) return value;
+    if (Date.now() - start > timeout) throw new Error('Tiempo de espera agotado');
+    await new Promise((done) => setTimeout(done, 50));
+  }
+}
+
+describe('avisos de anuncios', () => {
+  let app;
+  let smtp;
+  const admin = client();
+  const as = {};
+
+  before(async () => {
+    app = await startApp();
+    smtp = await fakeSmtp();
+    await ensureAdmin(app.db, ADMIN);
+    Object.assign(admin, client(app.url));
+    await admin.login(ADMIN.email, ADMIN.password);
+    const people = [['rh', 'rrhh'], ['luis', 'empleado'], ['sara', 'empleado'], ['baja', 'empleado'], ['malo', 'empleado']];
+    for (const [name, role] of people) {
+      const email = name === 'malo' ? 'malo@rechazado.test' : `${name}@a.test`;
+      const res = await admin.post('/api/employees', { first_name: name, last_name: 'Aviso', email, role, password: 'password123' });
+      as[name] = client(app.url);
+      await as[name].login(email, 'password123');
+      if (name === 'baja') await admin.put(`/api/employees/${res.data.employee.id}`, { status: 'baja' });
+    }
+  });
+
+  after(async () => {
+    await app.close();
+    await smtp.close();
+  });
+
+  test('los anuncios nuevos aparecen como no leídos hasta que se ven', async () => {
+    await as.rh.post('/api/announcements', { title: 'Cierre por inventario', body: 'El viernes cerramos a las 15:00.' });
+    const unread = await as.luis.get('/api/announcements/unread');
+    assert.equal(unread.data.count, 1);
+    assert.equal(unread.data.items[0].title, 'Cierre por inventario');
+    assert.equal((await as.rh.get('/api/announcements/unread')).data.count, 0, 'el autor no recibe su propio aviso');
+    assert.equal((await as.luis.get('/api/announcements')).data.announcements[0].unread, true);
+
+    await as.luis.post('/api/announcements/seen');
+    assert.equal((await as.luis.get('/api/announcements/unread')).data.count, 0);
+    assert.equal((await as.sara.get('/api/announcements/unread')).data.count, 1);
+  });
+
+  test('solo el administrador configura el correo y nunca se devuelve la contraseña', async () => {
+    assert.equal((await as.rh.get('/api/settings/email')).status, 403);
+    const saved = await admin.put('/api/settings/email', {
+      host: '127.0.0.1', port: smtp.port, security: 'none', user: 'avisos@a.test', password: 'secreta',
+      from_email: 'avisos@a.test', from_name: 'Intranet Ñandú', public_url: 'http://192.168.1.20:3000/',
+    });
+    assert.equal(saved.status, 200, JSON.stringify(saved.data));
+    const read = await admin.get('/api/settings/email');
+    assert.equal(read.data.settings.has_password, true);
+    assert.equal(read.data.settings.password, undefined);
+    assert.equal(read.data.settings.public_url, 'http://192.168.1.20:3000');
+    // Guardar sin escribir contraseña conserva la anterior.
+    await admin.put('/api/settings/email', { ...read.data.settings, password: '' });
+    assert.equal((await admin.get('/api/settings/email')).data.settings.has_password, true);
+  });
+
+  test('el email de prueba llega al administrador', async () => {
+    const res = await admin.post('/api/settings/email/test');
+    assert.equal(res.status, 200, JSON.stringify(res.data));
+    const mail = smtp.messages.at(-1);
+    assert.deepEqual(mail.rcpts, [ADMIN.email]);
+    assert.deepEqual(smtp.logins.at(-1), ['avisos@a.test', 'secreta']);
+    assert.equal(decodeMail(mail.data).subject, 'Prueba de correo de la intranet');
+  });
+
+  test('al publicar con aviso por email se envía a la plantilla activa', async () => {
+    const before = smtp.messages.length;
+    const res = await as.rh.post('/api/announcements', {
+      title: 'Reunión general de café ☕ con toda la plantilla para hablar de los nuevos horarios de verano',
+      body: 'Nos vemos el lunes.', notify_email: true,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.data.email_recipients, 4); // admin, luis, sara y malo (no el autor ni el de baja)
+
+    const done = await waitFor(async () => {
+      const list = await as.rh.get('/api/announcements');
+      const item = list.data.announcements.find((a) => a.id === res.data.announcement.id);
+      return item.email?.status !== 'enviando' && item.email;
+    });
+    assert.equal(done.status, 'enviado');
+    assert.equal(done.sent, 3);
+    assert.equal(done.failed, 1);
+    assert.match(done.error, /malo@rechazado\.test/);
+
+    const mail = smtp.messages[before];
+    assert.deepEqual(mail.rcpts.sort(), [ADMIN.email, 'luis@a.test', 'sara@a.test'].sort());
+    const { subject, text } = decodeMail(mail.data);
+    assert.equal(subject, 'Nuevo anuncio: Reunión general de café ☕ con toda la plantilla para hablar de los nuevos horarios de verano');
+    assert.match(text, /rh Aviso ha publicado/);
+    assert.match(text, /http:\/\/192\.168\.1\.20:3000\/#\/anuncios/);
+    assert.match(mail.data, /From: =\?UTF-8\?B\?/);
+    assert.equal((await as.luis.get('/api/announcements')).data.announcements[0].email, undefined, 'solo RR. HH. ve el estado del envío');
+  });
+
+  test('sin marcar el aviso por email no se envía nada', async () => {
+    const before = smtp.messages.length;
+    await as.rh.post('/api/announcements', { title: 'Sin email', body: 'Solo en la intranet' });
+    await new Promise((done) => setTimeout(done, 200));
+    assert.equal(smtp.messages.length, before);
+  });
+
+  test('un error de autenticación se explica al administrador', async () => {
+    const bad = await fakeSmtp({ authOk: false });
+    try {
+      const settings = (await admin.get('/api/settings/email')).data.settings;
+      await admin.put('/api/settings/email', { ...settings, port: bad.port });
+      const res = await admin.post('/api/settings/email/test');
+      assert.equal(res.status, 400);
+      assert.match(res.data.error, /Usuario o contraseña del correo incorrectos/);
+    } finally {
+      await bad.close();
+    }
+  });
+
+  test('un servidor inexistente da un error claro', async () => {
+    const settings = (await admin.get('/api/settings/email')).data.settings;
+    await admin.put('/api/settings/email', { ...settings, port: 1 });
+    const res = await admin.post('/api/settings/email/test');
+    assert.equal(res.status, 400);
+    assert.match(res.data.error, /rechazó la conexión/);
   });
 });
