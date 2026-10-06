@@ -362,6 +362,7 @@ input[type='checkbox'] { width: 18px; height: 18px; min-height: 0; accent-color:
 }
 .login-brand { display: flex; align-items: center; gap: 14px; margin-bottom: 4px; }
 .login-card .btn { width: 100%; min-height: 42px; }
+.setup-card { width: min(460px, 100%); }
 
 /* ---------- Responsive ---------- */
 

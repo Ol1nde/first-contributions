@@ -8,6 +8,7 @@ import { renderEmployees } from './views/employees.js';
 import { renderLeaves } from './views/leaves.js';
 import { renderLogin } from './views/login.js';
 import { renderProfile } from './views/profile.js';
+import { renderSetup } from './views/setup.js';
 import { renderTime } from './views/time.js';
 
 const NAV = [
@@ -50,6 +51,18 @@ function showLogin(message) {
     message,
     onSuccess: (user) => {
       state.user = user;
+      renderShell();
+      render();
+    },
+  }));
+}
+
+function showSetup() {
+  document.title = 'Configuración inicial · Intranet';
+  clear(app).append(renderSetup({
+    onSuccess: (user) => {
+      state.user = user;
+      location.hash = '#/';
       renderShell();
       render();
     },
@@ -164,6 +177,11 @@ try {
   renderShell();
   render();
 } catch (err) {
-  if (err.status === 401) showLogin();
-  else clear(app).append(h('div', { class: 'alert alert-danger boot' }, err.message));
+  if (err.status === 401) {
+    const { needed } = await api.get('/api/setup').catch(() => ({ needed: false }));
+    if (needed) showSetup();
+    else showLogin();
+  } else {
+    clear(app).append(h('div', { class: 'alert alert-danger boot' }, err.message));
+  }
 }

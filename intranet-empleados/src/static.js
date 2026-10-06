@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
@@ -54,4 +55,33 @@ export async function serveStatic(req, res, pathname, root) {
   });
   if (req.method === 'HEAD') return res.end();
   createReadStream(file).pipe(res);
+}
+
+/** Fichero de la interfaz guardado en memoria (ejecutable autónomo). */
+export function memoryFile(body) {
+  return { body, etag: `"${createHash('sha1').update(body).digest('base64url')}"` };
+}
+
+export function serveMemory(req, res, pathname, files) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return sendText(res, 405, 'Método no permitido');
+  let relative;
+  try {
+    relative = decodeURIComponent(pathname);
+  } catch {
+    return sendText(res, 400, 'Ruta no válida');
+  }
+  if (relative.endsWith('/')) relative += 'index.html';
+  const file = files.get(relative.replace(/^\/+/, ''));
+  if (!file) return sendText(res, 404, 'No encontrado');
+  if (req.headers['if-none-match'] === file.etag) {
+    res.writeHead(304, { ETag: file.etag });
+    return res.end();
+  }
+  res.writeHead(200, {
+    'Content-Type': TYPES[extname(relative).toLowerCase()] ?? 'application/octet-stream',
+    'Content-Length': file.body.length,
+    ETag: file.etag,
+    'Cache-Control': 'no-cache',
+  });
+  return res.end(req.method === 'HEAD' ? undefined : file.body);
 }

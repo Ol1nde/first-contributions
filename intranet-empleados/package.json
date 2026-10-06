@@ -11,7 +11,13 @@
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning src/server.js",
     "demo": "node --disable-warning=ExperimentalWarning src/server.js --demo",
-    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+    "restablecer-clave": "node --disable-warning=ExperimentalWarning src/server.js --restablecer-clave",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
+    "build": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "postject": "1.0.0-alpha.6"
   },
   "license": "MIT"
 }

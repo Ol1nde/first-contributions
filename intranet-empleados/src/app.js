@@ -1,5 +1,4 @@
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { HttpError, parseCookies, readJson, Reply, sendJson } from './http.js';
 import { Router } from './router.js';
 import registerAnnouncements from './routes/announcements.js';
@@ -10,9 +9,7 @@ import registerEmployees from './routes/employees.js';
 import registerLeaves from './routes/leaves.js';
 import registerTime from './routes/time.js';
 import { hashToken, LoginLimiter } from './security.js';
-import { serveStatic } from './static.js';
-
-const DEFAULT_PUBLIC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../public');
+import { serveMemory, serveStatic } from './static.js';
 
 const SECURITY_HEADERS = {
   'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
@@ -23,9 +20,14 @@ const SECURITY_HEADERS = {
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
 };
 
+/**
+ * Crea el manejador HTTP. Los ficheros de la interfaz se sirven desde `publicDir` o,
+ * en el ejecutable autónomo, desde `staticFiles` (Map ruta → fichero en memoria).
+ */
 export function createApp({
   db,
-  publicDir = DEFAULT_PUBLIC_DIR,
+  publicDir,
+  staticFiles,
   secureCookies = false,
   trustProxy = false,
   sessionTtlMs = 12 * 60 * 60 * 1000,
@@ -41,7 +43,8 @@ export function createApp({
   registerTime(router, deps);
   registerAnnouncements(router, deps);
 
-  const root = resolve(publicDir);
+  if (!publicDir && !staticFiles) throw new Error('createApp necesita publicDir o staticFiles');
+  const root = publicDir ? resolve(publicDir) : null;
   const sessionQuery = db.prepare(`
     SELECT s.expires_at, e.id, e.first_name, e.last_name, e.email, e.role, e.status, e.manager_id, e.department_id
     FROM sessions s JOIN employees e ON e.id = s.employee_id
@@ -50,8 +53,9 @@ export function createApp({
 
   function clientIp(req) {
     if (trustProxy) {
+      // La última dirección es la que añade el proxy de confianza; las anteriores las controla el cliente.
       const forwarded = req.headers['x-forwarded-for'];
-      if (forwarded) return forwarded.split(',')[0].trim();
+      if (forwarded) return forwarded.split(',').at(-1).trim();
     }
     return req.socket.remoteAddress ?? '';
   }
@@ -135,6 +139,7 @@ export function createApp({
     }
     if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return handleApi(req, res, url);
     try {
+      if (staticFiles) return serveMemory(req, res, url.pathname, staticFiles);
       return await serveStatic(req, res, url.pathname, root);
     } catch (err) {
       logger.error(err);

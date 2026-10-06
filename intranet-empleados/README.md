@@ -3,6 +3,7 @@
 Aplicación web interna para gestionar la plantilla de una empresa: directorio de empleados, departamentos,
 vacaciones y ausencias con flujo de aprobación, registro de jornada (fichaje) y tablón de anuncios.
 
+- **Un solo archivo para Windows**: `Intranet-Empleados.exe` funciona con doble clic, sin instalar nada.
 - **Sin dependencias externas**: Node.js ≥ 22.13 y su SQLite integrado (`node:sqlite`). No hace falta `npm install`.
 - **Base de datos en un único fichero** (`data/intranet.db`), fácil de copiar para hacer copias de seguridad.
 - **Interfaz en español**, adaptable a móvil y con tema claro/oscuro automático.
@@ -19,19 +20,60 @@ vacaciones y ausencias con flujo de aprobación, registro de jornada (fichaje) y
 | **Anuncios** | Tablón de comunicaciones internas con anuncios fijados. |
 | **Mi perfil** | Datos propios, cambio de teléfono y de contraseña. |
 
-## Puesta en marcha
+## Instalación en Windows (sin instalar nada más)
+
+1. Crea una carpeta para la intranet, por ejemplo `C:\Intranet`, y copia dentro **`Intranet-Empleados.exe`**.
+   Los datos se guardarán en la subcarpeta `data` que se crea a su lado.
+2. Haz doble clic en `Intranet-Empleados.exe`.
+   - Si Windows muestra «Windows protegió su PC», pulsa **Más información → Ejecutar de todas formas**
+     (el ejecutable no está firmado digitalmente).
+   - Si el Firewall pregunta, pulsa **Permitir acceso** para que otros equipos de la red puedan entrar.
+3. Se abre el navegador. La primera vez aparece **«Configura tu intranet»**: crea tu cuenta de administrador.
+4. Da de alta los departamentos y empleados desde **Empleados → Nuevo empleado**, asignando a cada uno una
+   contraseña inicial.
+5. Los demás equipos entran con la dirección «Desde otros equipos» que aparece en la ventana negra
+   (por ejemplo `http://192.168.1.20:3000`).
+
+La ventana negra es el servidor: **debe quedarse abierta** mientras se use la intranet (puedes minimizarla).
+Para que arranque sola, crea un acceso directo al `.exe` en la carpeta de inicio (`Win + R` → `shell:startup`).
+
+**Copia de seguridad**: cierra la ventana y copia la carpeta `data`.
+
+**Contraseña del administrador olvidada**: abre una consola en la carpeta del programa y ejecuta
+`Intranet-Empleados.exe --restablecer-clave tu@email.es`; se mostrará una contraseña nueva.
+
+Opciones del ejecutable: `--sin-navegador` (no abre el navegador), `--demo` (carga datos de ejemplo),
+`--restablecer-clave <email>`. Las variables de entorno de [Configuración](#configuración) también se aplican.
+
+### Generar el ejecutable
+
+Requiere Node.js ≥ 22.13 en el equipo donde se genera:
 
 ```bash
 cd intranet-empleados
-npm start              # arranca en http://localhost:3000
+npm install
+npm run build            # dist/Intranet-Empleados.exe y el ejecutable del sistema actual
+npm run build -- win     # solo Windows (se puede generar desde Linux o macOS)
 ```
 
-En el primer arranque se crea el usuario **admin@empresa.local** y su contraseña aleatoria se muestra **una sola
-vez** en la consola. Puedes fijarla tú mismo:
+Usa [Single Executable Applications](https://nodejs.org/api/single-executable-applications.html) de Node.js:
+el resultado (~80 MB) incluye Node.js, la aplicación y la interfaz web. El de macOS solo puede generarse en un Mac.
+
+## Instalación con Node.js (cualquier sistema)
+
+```bash
+cd intranet-empleados
+npm start              # arranca en http://localhost:3000 (no necesita npm install)
+```
+
+Abre `http://localhost:3000` **en el mismo equipo** para crear la cuenta de administrador (por seguridad,
+la configuración inicial no se permite desde otros equipos). También puedes crearla sin navegador:
 
 ```bash
 ADMIN_EMAIL=admin@miempresa.es ADMIN_PASSWORD='una-clave-segura' npm start
 ```
+
+Contraseña olvidada: `npm run restablecer-clave -- admin@miempresa.es`.
 
 ### Probar con datos de ejemplo
 
@@ -39,11 +81,12 @@ ADMIN_EMAIL=admin@miempresa.es ADMIN_PASSWORD='una-clave-segura' npm start
 npm run demo
 ```
 
-Carga departamentos, 10 empleados, solicitudes, anuncios y fichajes. Todos los usuarios de ejemplo usan la
-contraseña `demo1234`:
+Carga departamentos, 10 empleados, solicitudes, anuncios y fichajes. Todos los usuarios de ejemplo, incluido
+`admin@empresa.local`, usan la contraseña `demo1234`:
 
 | Usuario | Rol |
 | --- | --- |
+| admin@empresa.local | Administrador |
 | javier.ruiz@empresa.local | RR. HH. |
 | elena.sanchez@empresa.local | Responsable (equipo de Tecnología) |
 | ana.garcia@empresa.local | Empleada |
@@ -64,9 +107,8 @@ Variables de entorno (todas opcionales):
 | --- | --- | --- |
 | `PORT` | `3000` | Puerto HTTP. |
 | `HOST` | `0.0.0.0` | Interfaz de red en la que escucha. |
-| `DB_FILE` | `data/intranet.db` | Ruta del fichero SQLite. |
-| `ADMIN_EMAIL` | `admin@empresa.local` | Email del administrador inicial (solo con la base de datos vacía). |
-| `ADMIN_PASSWORD` | aleatoria | Contraseña del administrador inicial. |
+| `DB_FILE` | `data/intranet.db` | Ruta del fichero SQLite (junto al ejecutable o en la carpeta del proyecto). |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | — | Crean el administrador al arrancar con la base de datos vacía, sin pasar por la pantalla de configuración. |
 | `SESSION_HOURS` | `12` | Duración de la sesión. |
 | `COOKIE_SECURE` | `0` | Pon `1` cuando se sirva por HTTPS. |
 | `TRUST_PROXY` | `0` | Pon `1` detrás de un proxy inverso (usa `X-Forwarded-For` / `X-Forwarded-Host`). |
@@ -138,7 +180,9 @@ registro de jornada (obligatorio durante 4 años): hay que marcarlos como «Baja
 
 ```
 src/
-  server.js        Arranque, variables de entorno y datos iniciales
+  start.js         Arranque, variables de entorno y datos iniciales
+  server.js        Entrada para `npm start`
+  sea-main.js      Entrada del ejecutable autónomo (interfaz embebida)
   app.js           Enrutado HTTP, sesiones, CSRF y cabeceras de seguridad
   db.js            Esquema SQLite, administrador inicial y datos de demo
   routes/          API REST: auth, employees, departments, leaves, time, announcements, dashboard
@@ -148,6 +192,7 @@ public/
   index.html       Aplicación de una sola página
   js/              Módulos ES (vistas en js/views/)
   css/styles.css   Estilos (claro/oscuro, responsive)
+scripts/build.mjs  Genera los ejecutables (npm run build)
 test/api.test.js   Tests de la API (node:test)
 ```
 
@@ -157,6 +202,7 @@ Todas las rutas están bajo `/api` y devuelven JSON (salvo las exportaciones CSV
 
 | Método y ruta | Descripción |
 | --- | --- |
+| `GET/POST /api/setup` | Primer uso: crear la cuenta de administrador (solo desde el propio equipo) |
 | `POST /api/auth/login` · `POST /api/auth/logout` · `GET /api/auth/me` | Sesión |
 | `PUT /api/auth/password` · `PUT /api/auth/profile` | Cambiar contraseña / teléfono propio |
 | `GET /api/dashboard` | Datos de la página de inicio |

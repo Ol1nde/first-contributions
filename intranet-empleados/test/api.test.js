@@ -1,9 +1,22 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { dirname, resolve } from 'node:path';
 import { after, before, describe, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { createApp } from '../src/app.js';
 import { ensureAdmin, openDatabase } from '../src/db.js';
+import { memoryFile } from '../src/static.js';
 import { localDate, workingDays } from '../src/validate.js';
+
+const PUBLIC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../public');
+
+/** Levanta una instancia independiente de la aplicación con base de datos en memoria. */
+async function startApp(options = {}) {
+  const db = openDatabase(':memory:');
+  const srv = createServer(createApp({ db, publicDir: PUBLIC_DIR, logger: { error() {} }, ...options }));
+  await new Promise((done) => srv.listen(0, '127.0.0.1', done));
+  return { db, url: `http://127.0.0.1:${srv.address().port}`, close: () => new Promise((done) => srv.close(done)) };
+}
 
 const ADMIN = { email: 'admin@test.local', password: 'admin-password' };
 let server;
@@ -12,7 +25,7 @@ let baseUrl;
 before(async () => {
   const db = openDatabase(':memory:');
   await ensureAdmin(db, ADMIN);
-  server = createServer(createApp({ db, logger: { error() {} } }));
+  server = createServer(createApp({ db, publicDir: PUBLIC_DIR, logger: { error() {} } }));
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
@@ -20,13 +33,13 @@ before(async () => {
 after(() => new Promise((resolve) => server.close(resolve)));
 
 /** Cliente HTTP mínimo que conserva la cookie de sesión. */
-function client() {
+function client(url) {
   let cookie = '';
-  const request = async (method, path, body) => {
-    const headers = {};
+  const request = async (method, path, body, extraHeaders = {}) => {
+    const headers = { ...extraHeaders };
     if (cookie) headers.Cookie = cookie;
     if (method !== 'GET') headers['Content-Type'] = 'application/json';
-    const res = await fetch(baseUrl + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    const res = await fetch((url ?? baseUrl) + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     const setCookie = res.headers.getSetCookie()[0];
     if (setCookie) cookie = setCookie.split(';')[0];
     const type = res.headers.get('content-type') ?? '';
@@ -39,6 +52,7 @@ function client() {
     put: (p, b = {}) => request('PUT', p, b),
     del: (p) => request('DELETE', p, {}),
     login: (email, password) => request('POST', '/api/auth/login', { email, password }),
+    request,
   };
 }
 
@@ -294,5 +308,59 @@ describe('ficheros estáticos', () => {
   test('impide salir del directorio público', async () => {
     const res = await fetch(`${baseUrl}/..%2fpackage.json`);
     assert.notEqual(res.status, 200);
+  });
+});
+
+describe('configuración inicial', () => {
+  const owner = { first_name: 'Olga', last_name: 'Dueña', email: 'olga@test.local', password: 'clave-segura' };
+
+  test('crea el administrador desde el navegador una sola vez', async () => {
+    const app = await startApp();
+    try {
+      const c = client(app.url);
+      assert.equal((await c.get('/api/setup')).data.needed, true);
+      const invalid = await c.post('/api/setup', { ...owner, password: 'corta' });
+      assert.equal(invalid.status, 400);
+      assert.ok(invalid.data.details.password);
+
+      const created = await c.post('/api/setup', owner);
+      assert.equal(created.status, 200);
+      assert.equal(created.data.user.role, 'admin');
+      assert.equal((await c.get('/api/auth/me')).data.user.email, owner.email);
+
+      assert.equal((await c.get('/api/setup')).data.needed, false);
+      assert.equal((await client(app.url).post('/api/setup', { ...owner, email: 'otro@test.local' })).status, 409);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('no se puede configurar desde otro equipo de la red', async () => {
+    const app = await startApp({ trustProxy: true });
+    try {
+      const remote = await client(app.url).request('POST', '/api/setup', owner, { 'X-Forwarded-For': '127.0.0.1, 203.0.113.9' });
+      assert.equal(remote.status, 403);
+      assert.equal((await client(app.url).get('/api/setup')).data.needed, true);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe('interfaz embebida (ejecutable)', () => {
+  test('sirve los ficheros desde memoria con ETag', async () => {
+    const files = new Map([['index.html', memoryFile(Buffer.from('<div id="app"></div>'))]]);
+    const app = await startApp({ publicDir: undefined, staticFiles: files });
+    try {
+      const res = await fetch(`${app.url}/`);
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get('content-type'), /text\/html/);
+      assert.equal(await res.text(), '<div id="app"></div>');
+      const cached = await fetch(`${app.url}/`, { headers: { 'If-None-Match': res.headers.get('etag') } });
+      assert.equal(cached.status, 304);
+      assert.equal((await fetch(`${app.url}/no-existe.js`)).status, 404);
+    } finally {
+      await app.close();
+    }
   });
 });

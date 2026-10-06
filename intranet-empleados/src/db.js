@@ -100,19 +100,28 @@ export function transaction(db, fn) {
   }
 }
 
-/**
- * Crea el administrador inicial si la base de datos está vacía.
- * Devuelve la contraseña generada cuando no se proporcionó ninguna.
- */
-export async function ensureAdmin(db, { email = 'admin@empresa.local', password } = {}) {
-  const { n } = db.prepare('SELECT COUNT(*) AS n FROM employees').get();
-  if (n > 0) return null;
-  const pwd = password || randomPassword();
+export function isEmpty(db) {
+  return db.prepare('SELECT COUNT(*) AS n FROM employees').get().n === 0;
+}
+
+/** Crea el administrador inicial si la base de datos está vacía. */
+export async function ensureAdmin(db, { email = 'admin@empresa.local', password }) {
+  if (!isEmpty(db)) return null;
   db.prepare(`
     INSERT INTO employees (first_name, last_name, email, position, role, password_hash)
     VALUES ('Administrador', 'Sistema', ?, 'Administrador de la intranet', 'admin', ?)
-  `).run(email.toLowerCase(), await hashPassword(pwd));
-  return { email: email.toLowerCase(), password: password ? null : pwd };
+  `).run(email.toLowerCase(), await hashPassword(password));
+  return { email: email.toLowerCase() };
+}
+
+/** Asigna una contraseña nueva (aleatoria si no se indica) y cierra las sesiones del usuario. */
+export async function resetPassword(db, email, password = randomPassword()) {
+  const emp = db.prepare('SELECT id FROM employees WHERE email = ?').get(String(email).trim().toLowerCase());
+  if (!emp) return null;
+  db.prepare("UPDATE employees SET password_hash = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(await hashPassword(password), emp.id);
+  db.prepare('DELETE FROM sessions WHERE employee_id = ?').run(emp.id);
+  return password;
 }
 
 /** Datos de ejemplo para probar la intranet. Todos los usuarios de demo usan la contraseña indicada. */

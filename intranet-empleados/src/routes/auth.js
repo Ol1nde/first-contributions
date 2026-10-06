@@ -1,3 +1,4 @@
+import { isEmpty } from '../db.js';
 import { HttpError, serializeCookie } from '../http.js';
 import { findEmployee, shapeEmployee } from '../queries.js';
 import {
@@ -7,7 +8,48 @@ import { Validator } from '../validate.js';
 
 export const SESSION_COOKIE = 'sid';
 
+const isLoopback = (ip) => ip === '::1' || /^(::ffff:)?127\./.test(ip);
+
 export default function registerAuth(router, { db, limiter, sessionTtlMs, secureCookies }) {
+  function startSession(ctx, employeeId) {
+    const token = newSessionToken();
+    const now = Date.now();
+    db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(now);
+    db.prepare('INSERT INTO sessions (id, employee_id, expires_at) VALUES (?, ?, ?)')
+      .run(hashToken(token), employeeId, now + sessionTtlMs);
+    ctx.setCookie(serializeCookie(SESSION_COOKIE, token, { maxAge: sessionTtlMs / 1000, secure: secureCookies }));
+    const user = findEmployee(db, employeeId);
+    return { user: shapeEmployee(user, user) };
+  }
+
+  // Primer uso: con la base de datos vacía se crea la cuenta de administrador desde el navegador.
+  // Solo se permite desde el propio equipo para que nadie de la red pueda adelantarse.
+  router.get('/api/setup', { public: true }, () => ({ needed: isEmpty(db) }));
+
+  router.post('/api/setup', { public: true }, async (ctx) => {
+    if (!isEmpty(db)) throw new HttpError(409, 'La intranet ya está configurada');
+    if (!isLoopback(ctx.ip)) {
+      throw new HttpError(403, 'La cuenta de administrador debe crearse desde el propio equipo donde se ejecuta la intranet (dirección http://localhost)');
+    }
+    const v = new Validator(ctx.body);
+    v.string('first_name', 'Nombre', { required: true, max: 100 });
+    v.string('last_name', 'Apellidos', { max: 150 });
+    v.email('email', 'Email', { required: true });
+    v.string('position', 'Puesto', { max: 150 });
+    const password = String(ctx.body.password ?? '');
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      v.addError('password', `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres`);
+    }
+    const data = v.done();
+    const hash = await hashPassword(password);
+    if (!isEmpty(db)) throw new HttpError(409, 'La intranet ya está configurada');
+    const { lastInsertRowid } = db.prepare(`
+      INSERT INTO employees (first_name, last_name, email, position, role, hire_date, password_hash)
+      VALUES (?, ?, ?, ?, 'admin', date('now', 'localtime'), ?)
+    `).run(data.first_name, data.last_name, data.email, data.position || 'Administrador de la intranet', hash);
+    return startSession(ctx, Number(lastInsertRowid));
+  });
+
   router.post('/api/auth/login', { public: true }, async (ctx) => {
     const email = String(ctx.body.email ?? '').trim().toLowerCase();
     const password = String(ctx.body.password ?? '');
@@ -23,16 +65,7 @@ export default function registerAuth(router, { db, limiter, sessionTtlMs, secure
       throw new HttpError(401, 'Email o contraseña incorrectos');
     }
     limiter.reset(key);
-
-    const token = newSessionToken();
-    const now = Date.now();
-    db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(now);
-    db.prepare('INSERT INTO sessions (id, employee_id, expires_at) VALUES (?, ?, ?)')
-      .run(hashToken(token), emp.id, now + sessionTtlMs);
-    ctx.setCookie(serializeCookie(SESSION_COOKIE, token, { maxAge: sessionTtlMs / 1000, secure: secureCookies }));
-
-    const user = findEmployee(db, emp.id);
-    return { user: shapeEmployee(user, user) };
+    return startSession(ctx, emp.id);
   });
 
   router.post('/api/auth/logout', { public: true }, (ctx) => {
